@@ -1,5 +1,10 @@
 # BestApp
 
+**Student Name:** Alain Yaacoub  
+**Student ID:** 40260582  
+**Course:** SOEN387  
+**Semester:** Fall 2026
+
 This repository contains the OpenAPI specification and Python validation tests for BestApp, a barbershop appointment-booking API.
 
 ## Repository contents
