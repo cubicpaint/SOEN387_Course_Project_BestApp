@@ -1,1 +1,18 @@
 /PROJECT_PLAN.md
+/docs
+
+# Local Python environment and generated files
+/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local configuration; keep placeholder-only examples available for Git
+.env
+.env.*
+!.env.example

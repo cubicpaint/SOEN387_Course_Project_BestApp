@@ -1,0 +1,1083 @@
+openapi: 3.1.0
+info:
+  title: BestApp API
+  version: 0.1.0
+  description: |
+    Authored design baseline for one barbershop with multiple barbers.
+    These operations are not implemented yet. Validation of this document
+    does not establish conformance of a running service.
+
+    Services are haircut (30 minutes), beard (30 minutes), and both (60 minutes).
+    Availability consists of 30-minute base blocks created from explicitly
+    dated America/Toronto ranges on the :00/:30 grid. A combined appointment
+    needs two consecutive available blocks for the same barber. All API
+    timestamps are UTC instants ending in Z; date queries mean local dates
+    in America/Toronto, including daylight-saving transitions.
+
+    A new appointment must start at least two elapsed hours after the trusted
+    server time used for the booking decision. Exactly two hours is eligible.
+    Intervals include their start and exclude their end, so back-to-back
+    appointments are allowed. A barber and a customer must each be free for
+    the complete interval. Availability results are observations, not holds.
+
+    The agreed customer change cutoff is 24 hours before the existing start,
+    inclusive. A booking made less than 24 hours ahead therefore cannot later
+    be cancelled or rescheduled online by the customer. Clients must explain
+    this restriction before such a booking is confirmed. Change operations
+    are not exposed by this contract.
+
+    Every response has a fresh server-generated X-Correlation-ID for logs
+    and Cache-Control: no-store. Errors contain a stable code, safe message,
+    and retryable flag; never a stack trace, password, token, or database URL.
+    A retryable error permits bounded retry with backoff; booking retries
+    must reuse the same Idempotency-Key and unchanged request.
+    Reject undeclared or repeated query parameters with validation_error.
+
+    Registration, cancellation, rescheduling, staff management, email
+    delivery, reminders, and optional appointment notes are not exposed here.
+    Appointment status confirmed means the booking is stored, not that an
+    email has been sent. Future scope is recorded separately in docs.
+x-status: design-baseline-not-implemented
+servers:
+  - url: http://localhost:8000
+    description: Planned local service address; no running service is supplied yet
+tags:
+  - name: Authentication
+  - name: Barbers
+  - name: Availability
+  - name: Appointments
+  - name: Health
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      tags: [Authentication]
+      summary: Authenticate a predefined customer or staff account
+      security: []
+      description: |
+        Accept JSON credentials and return a short-lived signed JWT. Incorrect
+        email and incorrect password produce the same invalid_credentials
+        response to avoid account enumeration. Demo credentials are provisioned
+        outside source control; the examples below are placeholders.
+
+        The server validates password hashes. Protected operations subsequently
+        validate the token signature, allowed algorithm, expiration, issuer,
+        audience, and subject, then enforce service-layer permissions. Client
+        fields and decoded-but-unverified claims cannot establish authority.
+        Staff can log in but cannot use customer-only operations.
+        Login does not require an idempotency key and may issue a new token
+        when repeated. Store browser tokens in memory; no refresh API is exposed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: customer@example.test
+              password: REPLACE_WITH_LOCAL_DEMO_PASSWORD
+      responses:
+        '200':
+          description: Authenticated caller and bearer token
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              examples:
+                customer:
+                  value:
+                    accessToken: exampleHeader.examplePayload.exampleSignature
+                    tokenType: Bearer
+                    expiresIn: 1800
+                    user:
+                      id: usr_101
+                      role: customer
+                      managedBarberIds: []
+                shopStaff:
+                  value:
+                    accessToken: exampleHeader.exampleStaffPayload.exampleSignature
+                    tokenType: Bearer
+                    expiresIn: 1800
+                    user:
+                      id: usr_201
+                      role: staff
+                      managedBarberIds: [bar_101, bar_102]
+        '400':
+          $ref: '#/components/responses/InvalidJson'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /barbers:
+    get:
+      operationId: listBarbers
+      tags: [Barbers]
+      summary: List the shop's barbers
+      security: []
+      description: |
+        Public display information only, ordered by displayName and then id.
+        No account credentials, contact details, or staff permission records
+        are returned. An empty shop returns 200 with an empty barbers array.
+        Unknown or repeated query parameters receive validation_error.
+      responses:
+        '200':
+          description: All configured barbers
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarberListResponse'
+              examples:
+                barbers:
+                  value:
+                    barbers:
+                      - id: bar_101
+                        displayName: Alex
+                      - id: bar_102
+                        displayName: Sam
+                empty:
+                  value:
+                    barbers: []
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /availability:
+    get:
+      operationId: listAvailability
+      tags: [Availability]
+      summary: Find starting slots for one barber, local date, and service
+      security: []
+      description: |
+        Return starts in ascending instant order for the specified barber and
+        America/Toronto date. Each result covers the complete requested duration:
+        a both result needs two consecutive free 30-minute blocks for that barber.
+        slotId identifies the first base block; endTime is the end of the entire
+        requested service, not merely the first block. Only starts on the local
+        :00/:30 grid with at least two hours' notice at evaluation are included.
+
+        The local date begins at local midnight and ends at the next local
+        midnight; do not assume a date is always 24 elapsed hours long. Distinct
+        UTC instants and slot IDs distinguish repeated clock times during a
+        daylight-saving fallback. All occupied, past, too-soon, and incomplete
+        intervals are excluded. A known barber with no eligible start, including
+        a past date, returns 200 with an empty slots array. An unknown barber
+        returns barber_not_found. No additional booking-horizon rule is imposed.
+
+        This public operation checks barber availability, not a particular
+        customer's conflicts. It creates no reservation. Booking rechecks both
+        barber availability and the authenticated customer's full interval.
+        Unknown or repeated query parameters receive validation_error.
+      parameters:
+        - name: barberId
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/BarberId'
+          example: bar_101
+        - name: date
+          in: query
+          required: true
+          description: A calendar date in America/Toronto
+          schema:
+            $ref: '#/components/schemas/LocalDate'
+          example: '2026-11-17'
+        - name: service
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/ServiceChoice'
+          example: both
+      responses:
+        '200':
+          description: Duration-aware available starts observed at request evaluation
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailabilityResponse'
+              examples:
+                combined:
+                  value:
+                    barberId: bar_101
+                    date: '2026-11-17'
+                    timeZone: America/Toronto
+                    service: both
+                    durationMinutes: 60
+                    slots:
+                      - slotId: slot_205
+                        startTime: '2026-11-17T15:00:00Z'
+                        endTime: '2026-11-17T16:00:00Z'
+                haircut:
+                  value:
+                    barberId: bar_101
+                    date: '2026-11-17'
+                    timeZone: America/Toronto
+                    service: haircut
+                    durationMinutes: 30
+                    slots:
+                      - slotId: slot_205
+                        startTime: '2026-11-17T15:00:00Z'
+                        endTime: '2026-11-17T15:30:00Z'
+                empty:
+                  value:
+                    barberId: bar_101
+                    date: '2026-11-17'
+                    timeZone: America/Toronto
+                    service: beard
+                    durationMinutes: 30
+                    slots: []
+        '404':
+          $ref: '#/components/responses/BarberNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /appointments:
+    post:
+      operationId: bookAppointment
+      tags: [Appointments]
+      summary: Book the authenticated customer's appointment atomically
+      security:
+        - bearerAuth: []
+      description: |
+        Customer role only. Derive customer identity from the verified caller,
+        barber and start from slotId, and duration from service. Reject additional
+        request fields, including customerId, barberId, durationMinutes, role,
+        and notes. No caller-supplied slot version or duration is trusted.
+
+        Claim the complete interval atomically: one block for haircut or beard,
+        two consecutive blocks for both. Concurrent requests cannot double-book
+        a barber or an overlapping customer, including across different barbers.
+        A rejected or rolled-back booking transaction leaves no appointment
+        or partial block allocation. A failed or lost HTTP response can instead
+        have an uncertain outcome; retry it using the same key and request.
+        Unknown starting slots return slot_not_found. Unavailable or incomplete
+        durations return slot_unavailable. A customer's overlap returns
+        customer_overlap. Less than two hours' notice returns
+        booking_notice_violation; exactly two hours is eligible. Use the trusted
+        server decision time, not a client clock. This response confirms the
+        appointment only; email delivery is not included in this contract.
+
+        Idempotency-Key is required and case-sensitive. Scope keys to the
+        authenticated caller, binding each to HTTP operation and normalized
+        validated request content (slotId and service, ignoring JSON property
+        order and insignificant whitespace). Retain completed outcomes for the
+        lifetime of the persisted database; no automatic expiry is defined.
+        A new booking attempt uses a new unpredictable key.
+
+        After authenticating and authorizing the caller and validating the key
+        and request shape, replay a matching completed outcome before evaluating
+        present-day availability, overlap, or notice rules. Return its original
+        HTTP status and identical JSON body. X-Correlation-ID is fresh for each
+        request and is not part of the stored body. Changed content under the
+        same caller/key returns idempotency_key_conflict and never overwrites
+        the first outcome. Different callers have independent key scopes.
+
+        Concurrent identical requests serialize to one decision and replay that
+        decision; if waiting for completion times out, return service_unavailable
+        and let the client retry with the same key. Persist the original 201 and
+        business rejections slot_not_found, slot_unavailable, customer_overlap,
+        and booking_notice_violation. Commit a successful appointment, all its
+        block claims, and its durable outcome together. A rejected decision may
+        commit its outcome but cannot change appointment/block data. Do not
+        record malformed input, authentication/authorization failures, conflicting
+        key reuse, or transient 500/503 responses as completed outcomes. Following
+        an uncertain response or lost connection, reuse the same key and body.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/IdempotencyKey'
+          example: 123e4567-e89b-42d3-a456-426614174000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingRequest'
+            examples:
+              combined:
+                value:
+                  slotId: slot_205
+                  service: both
+              beard:
+                value:
+                  slotId: slot_205
+                  service: beard
+      responses:
+        '201':
+          description: Appointment created, or original creation outcome replayed
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+              example:
+                id: apt_301
+                barberId: bar_101
+                slotId: slot_205
+                service: both
+                durationMinutes: 60
+                startTime: '2026-11-17T15:00:00Z'
+                endTime: '2026-11-17T16:00:00Z'
+                status: confirmed
+                createdAt: '2026-11-14T18:00:00Z'
+        '400':
+          $ref: '#/components/responses/InvalidJson'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SlotNotFound'
+        '409':
+          $ref: '#/components/responses/BookingConflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/BookingUnprocessable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      operationId: listOwnAppointments
+      tags: [Appointments]
+      summary: List the authenticated customer's upcoming confirmed appointments
+      security:
+        - bearerAuth: []
+      description: |
+        Customer role only. Return appointments owned by the verified caller
+        with status confirmed and startTime greater than or equal to the trusted
+        server time at evaluation, ordered by startTime and then id ascending.
+        Return 200 with an empty appointments array when there are none.
+        No customerId filter or staff access to other customers is exposed.
+        Reject unknown or repeated query parameters with validation_error.
+        Results include the complete service duration, not only the first block.
+      responses:
+        '200':
+          description: The caller's upcoming confirmed appointments
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppointmentListResponse'
+              examples:
+                upcoming:
+                  value:
+                    appointments:
+                      - id: apt_301
+                        barberId: bar_101
+                        slotId: slot_205
+                        service: both
+                        durationMinutes: 60
+                        startTime: '2026-11-17T15:00:00Z'
+                        endTime: '2026-11-17T16:00:00Z'
+                        status: confirmed
+                        createdAt: '2026-11-14T18:00:00Z'
+                empty:
+                  value:
+                    appointments: []
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /health/live:
+    get:
+      operationId: checkLiveness
+      tags: [Health]
+      summary: Check that the HTTP process responds
+      security: []
+      description: |
+        Public process-only check. A database or email-provider outage does not
+        make a live process fail this check. No database or provider call is made.
+        Unknown or repeated query parameters receive validation_error.
+      responses:
+        '200':
+          description: The HTTP process is alive
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LivenessResponse'
+              example:
+                status: alive
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /health/ready:
+    get:
+      operationId: checkReadiness
+      tags: [Health]
+      summary: Check readiness to serve requests, including required database schema
+      security: []
+      description: |
+        Public readiness check. Return 503 service_unavailable if the database
+        cannot be reached or the required schema is unavailable. Return only
+        controlled status information; never expose connection strings, schema
+        internals, or exception details. An email-provider outage alone does not
+        make booking unready. Unknown or repeated query parameters receive
+        validation_error.
+      responses:
+        '200':
+          description: Required application and database prerequisites are ready
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+              example:
+                status: ready
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Signed, short-lived token from login. Verify signature with a configured
+        allowed algorithm and require valid expiration, issuer, audience, and
+        subject. Customer-only permissions are enforced in the service layer.
+        Never accept caller-supplied role or customer identity as authorization.
+  headers:
+    CorrelationId:
+      required: true
+      description: Fresh server-generated identifier for this request and its logs
+      schema:
+        type: string
+        format: uuid
+      example: 00000000-0000-4000-8000-000000000001
+    NoStore:
+      required: true
+      description: Prevent storage of credentials, personal data, and stale availability
+      schema:
+        type: string
+        const: no-store
+      example: no-store
+    Authenticate:
+      required: true
+      description: Bearer authentication challenge
+      schema:
+        type: string
+        const: Bearer
+      example: Bearer
+    RetryAfter:
+      required: true
+      description: Minimum delay in seconds before a bounded retry
+      schema:
+        type: integer
+        minimum: 1
+      example: 5
+
+  schemas:
+    UserId:
+      type: string
+      pattern: '^usr_[A-Za-z0-9_-]+$'
+      maxLength: 64
+      examples: [usr_101]
+    BarberId:
+      type: string
+      pattern: '^bar_[A-Za-z0-9_-]+$'
+      maxLength: 64
+      examples: [bar_101]
+    SlotId:
+      type: string
+      pattern: '^slot_[A-Za-z0-9_-]+$'
+      maxLength: 64
+      examples: [slot_205]
+    AppointmentId:
+      type: string
+      pattern: '^apt_[A-Za-z0-9_-]+$'
+      maxLength: 64
+      examples: [apt_301]
+    ServiceChoice:
+      type: string
+      enum: [haircut, beard, both]
+      description: Haircut and beard each last 30 minutes; both lasts 60 minutes
+      examples: [haircut, beard, both]
+    DurationMinutes:
+      type: integer
+      enum: [30, 60]
+      examples: [30, 60]
+    UTCDateTime:
+      type: string
+      format: date-time
+      pattern: 'Z$'
+      description: UTC instant with seconds, optionally fractional, ending in Z
+      examples: ['2026-11-17T15:00:00Z']
+    LocalDate:
+      type: string
+      format: date
+      pattern: '^\d{4}-\d{2}-\d{2}$'
+      description: Calendar date interpreted in America/Toronto
+      examples: ['2026-11-17']
+    IdempotencyKey:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+      description: Opaque case-sensitive key; use a new unpredictable value per attempt
+      examples: [123e4567-e89b-42d3-a456-426614174000]
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          writeOnly: true
+      examples:
+        - email: customer@example.test
+          password: REPLACE_WITH_LOCAL_DEMO_PASSWORD
+    Caller:
+      type: object
+      additionalProperties: false
+      required: [id, role, managedBarberIds]
+      properties:
+        id:
+          $ref: '#/components/schemas/UserId'
+        role:
+          type: string
+          enum: [customer, staff]
+        managedBarberIds:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/BarberId'
+          description: |
+            Staff availability is limited to explicitly assigned barbers. The
+            shop staff account is assigned all barbers using the same staff
+            role. Customers have an empty array. This response supports display;
+            the server's trusted permission mapping remains authoritative.
+      allOf:
+        - if:
+            properties:
+              role:
+                const: customer
+          then:
+            properties:
+              managedBarberIds:
+                maxItems: 0
+      examples:
+        - id: usr_101
+          role: customer
+          managedBarberIds: []
+        - id: usr_201
+          role: staff
+          managedBarberIds: [bar_101, bar_102]
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, tokenType, expiresIn, user]
+      properties:
+        accessToken:
+          type: string
+          pattern: '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
+          description: Signed JWT; examples are deliberately nonfunctional placeholders
+        tokenType:
+          type: string
+          const: Bearer
+        expiresIn:
+          type: integer
+          minimum: 1
+          maximum: 3600
+          description: Token lifetime in seconds; configure no more than one hour
+        user:
+          $ref: '#/components/schemas/Caller'
+    Barber:
+      type: object
+      additionalProperties: false
+      required: [id, displayName]
+      properties:
+        id:
+          $ref: '#/components/schemas/BarberId'
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 100
+      examples:
+        - id: bar_101
+          displayName: Alex
+    BarberListResponse:
+      type: object
+      additionalProperties: false
+      required: [barbers]
+      properties:
+        barbers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Barber'
+    BookingRequest:
+      type: object
+      additionalProperties: false
+      required: [slotId, service]
+      properties:
+        slotId:
+          $ref: '#/components/schemas/SlotId'
+        service:
+          $ref: '#/components/schemas/ServiceChoice'
+      examples:
+        - slotId: slot_205
+          service: both
+    AvailableStart:
+      type: object
+      additionalProperties: false
+      required: [slotId, startTime, endTime]
+      properties:
+        slotId:
+          $ref: '#/components/schemas/SlotId'
+        startTime:
+          $ref: '#/components/schemas/UTCDateTime'
+        endTime:
+          $ref: '#/components/schemas/UTCDateTime'
+      examples:
+        - slotId: slot_205
+          startTime: '2026-11-17T15:00:00Z'
+          endTime: '2026-11-17T16:00:00Z'
+    AvailabilityResponse:
+      type: object
+      additionalProperties: false
+      required: [barberId, date, timeZone, service, durationMinutes, slots]
+      properties:
+        barberId:
+          $ref: '#/components/schemas/BarberId'
+        date:
+          $ref: '#/components/schemas/LocalDate'
+        timeZone:
+          type: string
+          const: America/Toronto
+        service:
+          $ref: '#/components/schemas/ServiceChoice'
+        durationMinutes:
+          $ref: '#/components/schemas/DurationMinutes'
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailableStart'
+      allOf:
+        - if:
+            properties:
+              service:
+                enum: [haircut, beard]
+          then:
+            properties:
+              durationMinutes:
+                const: 30
+          else:
+            properties:
+              durationMinutes:
+                const: 60
+    Appointment:
+      type: object
+      additionalProperties: false
+      required: [id, barberId, slotId, service, durationMinutes, startTime, endTime, status, createdAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/AppointmentId'
+        barberId:
+          $ref: '#/components/schemas/BarberId'
+        slotId:
+          $ref: '#/components/schemas/SlotId'
+        service:
+          $ref: '#/components/schemas/ServiceChoice'
+        durationMinutes:
+          $ref: '#/components/schemas/DurationMinutes'
+        startTime:
+          $ref: '#/components/schemas/UTCDateTime'
+        endTime:
+          $ref: '#/components/schemas/UTCDateTime'
+        status:
+          type: string
+          const: confirmed
+          description: Persisted booking; does not indicate an email was sent
+        createdAt:
+          $ref: '#/components/schemas/UTCDateTime'
+      allOf:
+        - if:
+            properties:
+              service:
+                enum: [haircut, beard]
+          then:
+            properties:
+              durationMinutes:
+                const: 30
+          else:
+            properties:
+              durationMinutes:
+                const: 60
+    AppointmentListResponse:
+      type: object
+      additionalProperties: false
+      required: [appointments]
+      properties:
+        appointments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Appointment'
+    LivenessResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: alive
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ready
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_json
+                - invalid_credentials
+                - unauthenticated
+                - forbidden
+                - barber_not_found
+                - slot_not_found
+                - slot_unavailable
+                - customer_overlap
+                - idempotency_key_conflict
+                - unsupported_media_type
+                - validation_error
+                - booking_notice_violation
+                - internal_error
+                - service_unavailable
+            message:
+              type: string
+              minLength: 1
+              maxLength: 256
+              description: Safe human-readable explanation; clients branch on code
+            retryable:
+              type: boolean
+              description: Whether bounded retry of this request is appropriate
+      examples:
+        - error:
+            code: slot_unavailable
+            message: The complete requested duration is unavailable.
+            retryable: false
+
+  responses:
+    InvalidJson:
+      description: Malformed JSON; invalid_json. Correct the request before retrying.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: invalid_json
+              message: The request body is not valid JSON.
+              retryable: false
+    InvalidCredentials:
+      description: Incorrect email or password; invalid_credentials. No token is issued.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+        WWW-Authenticate:
+          $ref: '#/components/headers/Authenticate'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: invalid_credentials
+              message: Email or password is incorrect.
+              retryable: false
+    Unauthenticated:
+      description: Missing, forged, expired, or otherwise invalid bearer token; unauthenticated
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+        WWW-Authenticate:
+          $ref: '#/components/headers/Authenticate'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: unauthenticated
+              message: A valid bearer token is required.
+              retryable: false
+    Forbidden:
+      description: Valid caller lacks customer permission; forbidden. Staff cannot book or list as a customer.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: forbidden
+              message: This operation requires a customer account.
+              retryable: false
+    BarberNotFound:
+      description: Well-formed barberId does not identify a barber; barber_not_found
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: barber_not_found
+              message: The requested barber does not exist.
+              retryable: false
+    SlotNotFound:
+      description: Well-formed slotId does not identify a starting block; slot_not_found. This business outcome is recorded.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: slot_not_found
+              message: The requested starting slot does not exist.
+              retryable: false
+    BookingConflict:
+      description: |
+        slot_unavailable or customer_overlap is a recorded business rejection.
+        idempotency_key_conflict means this caller already used the key for
+        different normalized content; the original recorded outcome is unchanged.
+        None permits automatic retry as a new booking. After refreshing choices,
+        use a new key for an intentional new attempt.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            unavailable:
+              value:
+                error:
+                  code: slot_unavailable
+                  message: The complete requested duration is unavailable.
+                  retryable: false
+            customerOverlap:
+              value:
+                error:
+                  code: customer_overlap
+                  message: You already have an appointment during this interval.
+                  retryable: false
+            conflictingKey:
+              value:
+                error:
+                  code: idempotency_key_conflict
+                  message: This idempotency key was used for a different request.
+                  retryable: false
+    UnsupportedMediaType:
+      description: Request body is not application/json; unsupported_media_type
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: unsupported_media_type
+              message: Send the request body as application/json.
+              retryable: false
+    ValidationError:
+      description: |
+        validation_error for missing/invalid values, extra body fields, unknown
+        query parameters, or repeated query parameters. Input failures are not
+        stored as completed idempotency outcomes. Messages do not echo secrets.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: validation_error
+              message: The request does not match the documented input schema.
+              retryable: false
+    BookingUnprocessable:
+      description: |
+        validation_error for invalid request shape or a missing/invalid
+        Idempotency-Key is not recorded. booking_notice_violation means the
+        start is less than two hours after the server's booking decision time;
+        this business outcome is recorded. Exactly two hours is accepted.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalidInput:
+              value:
+                error:
+                  code: validation_error
+                  message: The request does not match the documented input schema.
+                  retryable: false
+            notice:
+              value:
+                error:
+                  code: booking_notice_violation
+                  message: The appointment must start at least two hours from now.
+                  retryable: false
+    InternalError:
+      description: |
+        Controlled unexpected failure; internal_error. No stack trace or
+        infrastructure details are returned. A bounded retry is permitted;
+        booking must reuse its original key and content. Do not persist this
+        transient response as a completed outcome or assume the booking failed.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: internal_error
+              message: The request could not be completed safely.
+              retryable: true
+    ServiceUnavailable:
+      description: |
+        Temporary dependency or transaction-wait failure; service_unavailable.
+        Readiness also uses this for missing required database schema. Honor
+        Retry-After; a booking retry must use the same key and content. This
+        transient response is not stored as a completed idempotency outcome.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: service_unavailable
+              message: The service is temporarily unavailable.
+              retryable: true
