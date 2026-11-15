@@ -12,6 +12,7 @@ This repository contains the OpenAPI specification and Python validation tests f
 | File | Purpose |
 | --- | --- |
 | [api/openapi.yaml](api/openapi.yaml) | OpenAPI 3.1 specification, version `0.1.0`, with request/response schemas and examples |
+| [api/contract-behavior.md](api/contract-behavior.md) | Design reference for caller permissions, booking boundaries, errors, retry decisions, and required runtime checks |
 | [tests/contract/test_openapi.py](tests/contract/test_openapi.py) | Tests for the specification, examples, and schema constraints |
 | [requirements-dev.txt](requirements-dev.txt) | Pinned direct dependencies for the validation tools |
 
@@ -53,8 +54,10 @@ The test suite includes OpenAPI validation, so you can run the pytest command on
 - Operation and authentication declarations in the contract.
 - Required fields and rejection of unsupported booking fields.
 - Service choices, duration constraints, and consistency of example intervals.
+- Response-specific error codes, retry flags, and HTTP status declarations.
+- Availability example ordering, distinct slot IDs, and Toronto local dates across timezone transitions.
 - Idempotency-key format, response-header declarations, and placeholder credentials.
 
-The suite contains 34 tests. These are specification and schema checks, not evidence that authentication, booking, persistence, concurrency, or request retries work in a running service.
+The suite contains 52 tests. These are specification and schema checks, not evidence that authentication, booking, persistence, concurrency, or request retries work in a running service.
 
 Example credentials are nonfunctional placeholders. Example dates illustrate request and response formats and are not live availability.
