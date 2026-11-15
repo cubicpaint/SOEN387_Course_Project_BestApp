@@ -44,6 +44,8 @@ def pytest_terminal_summary(terminalreporter):
     results = {}
     for reports in terminalreporter.stats.values():
         for report in reports:
+            if not hasattr(report, "when"):
+                continue
             description = dict(getattr(report, "user_properties", [])).get(SUMMARY_PROPERTY)
             if description is None:
                 continue
@@ -344,3 +346,153 @@ def test_credential_examples_are_explicit_placeholders(spec):
                 assert item["accessToken"].lower().startswith("example"), label
                 seen.add("accessToken")
     assert seen == {"password", "accessToken"}
+
+
+ERROR_CODES = {
+    "invalid_json", "invalid_credentials", "unauthenticated", "forbidden",
+    "barber_not_found", "slot_not_found", "slot_unavailable", "customer_overlap",
+    "idempotency_key_conflict", "unsupported_media_type", "validation_error",
+    "booking_notice_violation", "internal_error", "service_unavailable",
+}
+
+
+@pytest.mark.parametrize(
+    "response_name,http_status,allowed_codes,retryable",
+    [
+        pytest.param(
+            "InvalidJson", "400", {"invalid_json"}, False,
+            id="Invalid JSON responses allow only their documented error and forbid automatic retries.",
+        ),
+        pytest.param(
+            "InvalidCredentials", "401", {"invalid_credentials"}, False,
+            id="Invalid credential responses allow only their documented error and forbid automatic retries.",
+        ),
+        pytest.param(
+            "Unauthenticated", "401", {"unauthenticated"}, False,
+            id="Unauthenticated responses allow only their documented error and forbid automatic retries.",
+        ),
+        pytest.param(
+            "Forbidden", "403", {"forbidden"}, False,
+            id="Forbidden responses allow only their documented error and forbid automatic retries.",
+        ),
+        pytest.param(
+            "BarberNotFound", "404", {"barber_not_found"}, False,
+            id="Missing barber responses allow only their documented error and forbid automatic retries.",
+        ),
+        pytest.param(
+            "SlotNotFound", "404", {"slot_not_found"}, False,
+            id="Missing slot responses allow only their documented error and forbid automatic retries.",
+        ),
+        pytest.param(
+            "BookingConflict", "409",
+            {"slot_unavailable", "customer_overlap", "idempotency_key_conflict"}, False,
+            id="Booking conflict responses restrict their error codes and forbid automatic retries.",
+        ),
+        pytest.param(
+            "UnsupportedMediaType", "415", {"unsupported_media_type"}, False,
+            id="Unsupported media responses allow only their documented error and forbid automatic retries.",
+        ),
+        pytest.param(
+            "ValidationError", "422", {"validation_error"}, False,
+            id="Validation responses allow only their documented error and forbid automatic retries.",
+        ),
+        pytest.param(
+            "BookingUnprocessable", "422",
+            {"validation_error", "booking_notice_violation"}, False,
+            id="Unprocessable booking responses restrict their error codes and forbid automatic retries.",
+        ),
+        pytest.param(
+            "InternalError", "500", {"internal_error"}, True,
+            id="Internal failure responses allow only their documented error and permit retries.",
+        ),
+        pytest.param(
+            "ServiceUnavailable", "503", {"service_unavailable"}, True,
+            id="Unavailable service responses allow only their documented error and permit retries.",
+        ),
+    ],
+)
+def test_error_responses_restrict_codes_retryability_and_http_status(
+    spec, response_name, http_status, allowed_codes, retryable
+):
+    """Each error response enforces its codes, retry advice, and HTTP status."""
+    schema = spec["components"]["responses"][response_name]["content"]["application/json"]["schema"]
+    check = validator(spec, schema)
+    for code in allowed_codes:
+        payload = {"error": {"code": code, "message": "Example error.", "retryable": retryable}}
+        check.validate(payload)
+        payload["error"]["retryable"] = not retryable
+        with pytest.raises(ValidationError):
+            check.validate(payload)
+    for code in ERROR_CODES - allowed_codes:
+        payload = {"error": {"code": code, "message": "Example error.", "retryable": retryable}}
+        with pytest.raises(ValidationError):
+            check.validate(payload)
+    reference = f"#/components/responses/{response_name}"
+    statuses = {
+        status
+        for _, _, operation in operations(spec)
+        for status, response in operation["responses"].items()
+        if response.get("$ref") == reference
+    }
+    assert statuses == {http_status}
+
+
+@pytest.mark.parametrize(
+    "service,minutes",
+    [
+        pytest.param("haircut", 30, id="Haircut availability requires a 30-minute duration."),
+        pytest.param("beard", 30, id="Beard availability requires a 30-minute duration."),
+        pytest.param("both", 60, id="Combined availability requires a 60-minute duration."),
+    ],
+)
+def test_availability_schema_enforces_service_duration(spec, service, minutes):
+    """Availability schemas enforce the duration of each service."""
+    availability = next(
+        deepcopy(item)
+        for _, _, example in examples(spec)
+        for _, item in walk(example)
+        if {"barberId", "date", "timeZone", "service", "durationMinutes", "slots"} <= item.keys()
+    )
+    availability["service"] = service
+    availability["durationMinutes"] = minutes
+    for slot in availability["slots"]:
+        start = datetime.fromisoformat(slot["startTime"])
+        slot["endTime"] = (start + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
+    check = validator(spec, spec["components"]["schemas"]["AvailabilityResponse"])
+    check.validate(availability)
+    availability["durationMinutes"] = 60 if minutes == 30 else 30
+    with pytest.raises(ValidationError):
+        check.validate(availability)
+
+
+def test_availability_examples_use_the_requested_local_date_and_order(spec):
+    """Availability examples contain ordered, distinct slots on the requested Toronto date."""
+    checked = 0
+    toronto = ZoneInfo("America/Toronto")
+    for label, _, example in examples(spec):
+        for _, item in walk(example):
+            if not {"date", "timeZone", "slots"} <= item.keys():
+                continue
+            starts = []
+            slot_ids = []
+            for slot in item["slots"]:
+                start = datetime.fromisoformat(slot["startTime"])
+                assert start.astimezone(toronto).date().isoformat() == item["date"], label
+                starts.append(start)
+                slot_ids.append(slot["slotId"])
+                checked += 1
+            assert starts == sorted(starts), label
+            assert len(slot_ids) == len(set(slot_ids)), label
+    assert checked, "Availability checks must exercise actual slot examples"
+
+
+@pytest.mark.parametrize(
+    "length",
+    [
+        pytest.param(1, id="Idempotency keys accept one character."),
+        pytest.param(128, id="Idempotency keys accept 128 characters."),
+    ],
+)
+def test_idempotency_key_length_boundaries_are_accepted(spec, length):
+    """Idempotency keys accept both documented length boundaries."""
+    validator(spec, spec["components"]["schemas"]["IdempotencyKey"]).validate("a" * length)
