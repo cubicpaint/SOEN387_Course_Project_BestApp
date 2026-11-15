@@ -33,6 +33,19 @@ info:
     must reuse the same Idempotency-Key and unchanged request.
     Reject undeclared or repeated query parameters with validation_error.
 
+    JSON bodies must use application/json. Malformed JSON or repeated member
+    names in a JSON object produce invalid_json; syntactically valid values
+    that do not match a request schema produce validation_error. Public
+    operations do not use Authorization headers. Protected operations require
+    exactly one valid bearer Authorization header; repeated headers produce
+    unauthenticated. These input checks never establish a completed booking
+    outcome. Input errors can be rejected before caller authentication; if
+    several input checks fail, any applicable documented input error may be
+    returned. For protected operations, always authenticate and authorize
+    before evaluating booking business rules, replaying an outcome, or reading
+    a customer's appointments. After authorization, if several business rules
+    fail, any applicable documented business rejection may be returned.
+
     Registration, cancellation, rescheduling, staff management, email
     delivery, reminders, and optional appointment notes are not exposed here.
     Appointment status confirmed means the booking is stored, not that an
@@ -177,6 +190,10 @@ paths:
         slotId identifies the first base block; endTime is the end of the entire
         requested service, not merely the first block. Only starts on the local
         :00/:30 grid with at least two hours' notice at evaluation are included.
+        A slot ID keeps the same barber and base-block interval while the
+        database is retained, including after availability changes. It is never
+        reassigned to a different block, so a stale selection cannot silently
+        select another barber or time.
 
         The local date begins at local midnight and ends at the next local
         midnight; do not assume a date is always 24 elapsed hours long. Distinct
@@ -253,6 +270,45 @@ paths:
                     service: beard
                     durationMinutes: 30
                     slots: []
+                utcNextDay:
+                  description: The UTC start is on the next date but the Toronto date is unchanged.
+                  value:
+                    barberId: bar_101
+                    date: '2026-11-17'
+                    timeZone: America/Toronto
+                    service: haircut
+                    durationMinutes: 30
+                    slots:
+                      - slotId: slot_301
+                        startTime: '2026-11-18T00:00:00Z'
+                        endTime: '2026-11-18T00:30:00Z'
+                repeatedLocalTime:
+                  description: Two distinct UTC starts both display as 01:00 during the Toronto clock fallback.
+                  value:
+                    barberId: bar_101
+                    date: '2026-11-01'
+                    timeZone: America/Toronto
+                    service: both
+                    durationMinutes: 60
+                    slots:
+                      - slotId: slot_401
+                        startTime: '2026-11-01T05:00:00Z'
+                        endTime: '2026-11-01T06:00:00Z'
+                      - slotId: slot_403
+                        startTime: '2026-11-01T06:00:00Z'
+                        endTime: '2026-11-01T07:00:00Z'
+                springClockChange:
+                  description: A 60-minute interval displays as 01:30 to 03:30 across the Toronto clock advance.
+                  value:
+                    barberId: bar_101
+                    date: '2026-03-08'
+                    timeZone: America/Toronto
+                    service: both
+                    durationMinutes: 60
+                    slots:
+                      - slotId: slot_501
+                        startTime: '2026-03-08T06:30:00Z'
+                        endTime: '2026-03-08T07:30:00Z'
         '404':
           $ref: '#/components/responses/BarberNotFound'
         '422':
@@ -285,15 +341,26 @@ paths:
         durations return slot_unavailable. A customer's overlap returns
         customer_overlap. Less than two hours' notice returns
         booking_notice_violation; exactly two hours is eligible. Use the trusted
-        server decision time, not a client clock. This response confirms the
+        server decision time, not a client clock. For each new decision, sample
+        one UTC instant after acquiring the required booking concurrency
+        protection and use it for every notice check in that decision. Time
+        spent waiting must not leave an earlier eligibility clock in use.
+        createdAt is not a substitute for this decision instant. A completed
+        outcome replays before taking a new eligibility decision.
+        This response confirms the
         appointment only; email delivery is not included in this contract.
 
-        Idempotency-Key is required and case-sensitive. Scope keys to the
+        Exactly one Idempotency-Key header is required; its value is
+        case-sensitive. Missing, invalid, or repeated values produce
+        validation_error without recording an outcome. Scope keys to the
         authenticated caller, binding each to HTTP operation and normalized
         validated request content (slotId and service, ignoring JSON property
-        order and insignificant whitespace). Retain completed outcomes for the
+        order and insignificant whitespace). Do not trim or case-fold the string
+        values. Retain completed outcomes for the
         lifetime of the persisted database; no automatic expiry is defined.
-        A new booking attempt uses a new unpredictable key.
+        An intentional new logical booking uses a new unpredictable key;
+        retries reuse the original key. A corrected request may reuse a key
+        that has no recorded outcome after an input-validation failure.
 
         After authenticating and authorizing the caller and validating the key
         and request shape, replay a matching completed outcome before evaluating
@@ -317,6 +384,7 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
+          description: Exactly one occurrence; header names are case-insensitive but the key value is case-sensitive
           schema:
             $ref: '#/components/schemas/IdempotencyKey'
           example: 123e4567-e89b-42d3-a456-426614174000
@@ -502,6 +570,8 @@ components:
         allowed algorithm and require valid expiration, issuer, audience, and
         subject. Customer-only permissions are enforced in the service layer.
         Never accept caller-supplied role or customer identity as authorization.
+        Protected operations require exactly one Authorization header; repeated
+        headers are rejected as unauthenticated. Public operations do not use it.
   headers:
     CorrelationId:
       required: true
@@ -547,6 +617,7 @@ components:
       type: string
       pattern: '^slot_[A-Za-z0-9_-]+$'
       maxLength: 64
+      description: Stable identity for one barber and 30-minute base-block interval; never reassigned within the retained database
       examples: [slot_205]
     AppointmentId:
       type: string
@@ -579,7 +650,7 @@ components:
       minLength: 1
       maxLength: 128
       pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
-      description: Opaque case-sensitive key; use a new unpredictable value per attempt
+      description: Opaque case-sensitive key for one logical booking; reuse the same value for retries
       examples: [123e4567-e89b-42d3-a456-426614174000]
     LoginRequest:
       type: object
@@ -761,6 +832,7 @@ components:
           description: Persisted booking; does not indicate an email was sent
         createdAt:
           $ref: '#/components/schemas/UTCDateTime'
+          description: Persisted creation timestamp; does not define the eligibility decision clock
       allOf:
         - if:
             properties:
@@ -842,7 +914,7 @@ components:
 
   responses:
     InvalidJson:
-      description: Malformed JSON; invalid_json. Correct the request before retrying.
+      description: Malformed JSON or repeated JSON object member names; invalid_json. Correct the request before retrying.
       headers:
         X-Correlation-ID:
           $ref: '#/components/headers/CorrelationId'
@@ -851,7 +923,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: invalid_json}
+                      retryable: {const: false}
           example:
             error:
               code: invalid_json
@@ -869,7 +947,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: invalid_credentials}
+                      retryable: {const: false}
           example:
             error:
               code: invalid_credentials
@@ -887,7 +971,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: unauthenticated}
+                      retryable: {const: false}
           example:
             error:
               code: unauthenticated
@@ -903,7 +993,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: forbidden}
+                      retryable: {const: false}
           example:
             error:
               code: forbidden
@@ -919,7 +1015,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: barber_not_found}
+                      retryable: {const: false}
           example:
             error:
               code: barber_not_found
@@ -935,7 +1037,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: slot_not_found}
+                      retryable: {const: false}
           example:
             error:
               code: slot_not_found
@@ -956,7 +1064,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {enum: [slot_unavailable, customer_overlap, idempotency_key_conflict]}
+                      retryable: {const: false}
           examples:
             unavailable:
               value:
@@ -986,7 +1100,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: unsupported_media_type}
+                      retryable: {const: false}
           example:
             error:
               code: unsupported_media_type
@@ -1005,7 +1125,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: validation_error}
+                      retryable: {const: false}
           example:
             error:
               code: validation_error
@@ -1013,7 +1139,7 @@ components:
               retryable: false
     BookingUnprocessable:
       description: |
-        validation_error for invalid request shape or a missing/invalid
+        validation_error for invalid request shape or a missing/invalid/repeated
         Idempotency-Key is not recorded. booking_notice_violation means the
         start is less than two hours after the server's booking decision time;
         this business outcome is recorded. Exactly two hours is accepted.
@@ -1025,7 +1151,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {enum: [validation_error, booking_notice_violation]}
+                      retryable: {const: false}
           examples:
             invalidInput:
               value:
@@ -1053,7 +1185,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: internal_error}
+                      retryable: {const: true}
           example:
             error:
               code: internal_error
@@ -1075,7 +1213,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  error:
+                    properties:
+                      code: {const: service_unavailable}
+                      retryable: {const: true}
           example:
             error:
               code: service_unavailable
