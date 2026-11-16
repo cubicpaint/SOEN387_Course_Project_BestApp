@@ -110,6 +110,8 @@ Send `POST /auth/login` with `Content-Type: application/json` and an object cont
 
 A successful response contains `accessToken`, `tokenType: "Bearer"`, `expiresIn`, and `user` (ID, role, and managed barber IDs). Unknown email and incorrect password both return `401 invalid_credentials` with the same message. Staff can log in. Public operations ignore authorization headers. No refresh-token or registration operation is provided.
 
+The reusable bearer dependency verifies the token and reloads current database identity and staff assignments. Service-level guards enforce customer role, ownership, and staff/barber permissions independently of HTTP. Tests exercise the dependency on routes registered only inside tests; protected appointment operations remain Phase 4 work.
+
 Malformed or duplicate JSON members return `400`; unsupported media returns `415`; invalid fields or query parameters return `422`. Passwords, hashes, and tokens are excluded from application logs. Keep tokens in browser memory when the later testing interface is added.
 
 ## Local Python development
@@ -230,5 +232,3 @@ For the running-container acceptance check:
 Run this separately from the integration suite. It builds/starts this Compose stack, checks live health responses and the published contract, inserts a uniquely named temporary barber, verifies it survives restarts and container recreation with the same volume, and briefly stops PostgreSQL to verify liveness/readiness and recovery. It then removes only its own temporary record and leaves the API/database running. Existing application data is retained.
 
 Phase 2 verification completed on November 15, 2026: all 118 cases passed (98 unit/contract checks and 20 real PostgreSQL integration checks), alongside the running-container restart, persistence, outage, and recovery checks. This evidence covers the foundation and health operations; later business workflows remain unimplemented.
-
-The reusable bearer dependency verifies tokens and reloads current database identity and staff assignments. Protected header handling is exercised on routes registered only in tests.

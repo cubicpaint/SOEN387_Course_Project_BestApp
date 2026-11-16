@@ -13,6 +13,7 @@ from app.domain.identity import Caller
 from app.domain.types import Role
 from app.interface.auth import current_caller
 from app.main import create_app
+from app.services.authorization import require_customer, require_owner, require_staff_barber
 from app.services.errors import Forbidden, Unauthenticated
 
 
@@ -21,10 +22,29 @@ STAFF = Caller("usr_staff", Role.STAFF, ("bar_one",))
 SECRET = "private-authorization-http-test-key-only-12345"
 
 
+def test_service_permissions_work_without_http():
+    assert require_customer(CUSTOMER) == CUSTOMER
+    assert require_owner(CUSTOMER, "usr_one") == CUSTOMER
+    assert require_staff_barber(STAFF, "bar_one") == STAFF
 
 
+@pytest.mark.parametrize("guard", [
+    lambda: require_customer(None), lambda: require_owner(None, "usr_one"),
+    lambda: require_staff_barber(None, "bar_one"),
+])
+def test_service_permissions_require_a_trusted_caller(guard):
+    with pytest.raises(Unauthenticated):
+        guard()
 
 
+@pytest.mark.parametrize("guard", [
+    lambda: require_customer(STAFF), lambda: require_owner(CUSTOMER, "usr_two"),
+    lambda: require_owner(STAFF, "usr_one"), lambda: require_staff_barber(CUSTOMER, "bar_one"),
+    lambda: require_staff_barber(STAFF, "bar_two"),
+])
+def test_service_permissions_reject_wrong_role_owner_and_assignment(guard):
+    with pytest.raises(Forbidden):
+        guard()
 
 
 @pytest.fixture
@@ -41,7 +61,7 @@ def client(monkeypatch):
 
     @app.get("/test/customer")
     def protected(caller: Annotated[Caller, Depends(current_caller)]):
-        return {"id": caller.id}
+        return {"id": require_customer(caller).id}
 
     with TestClient(app, raise_server_exceptions=False) as http:
         yield http
@@ -83,6 +103,11 @@ def test_real_bearer_dependency_rejects_invalid_tokens(client, kind):
     assert response.json()["error"]["code"] == "unauthenticated"
 
 
+def test_valid_identity_with_wrong_role_gets_403_from_service_guard(client, monkeypatch):
+    monkeypatch.setattr(client.app.state.authentication, "authenticate", lambda token: STAFF)
+    response = client.get("/test/customer", headers={"Authorization": "Bearer token"})
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"
 
 
 def test_no_test_security_routes_are_published(client):

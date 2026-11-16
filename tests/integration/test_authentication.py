@@ -15,6 +15,7 @@ from app.domain.types import Role
 from app.interface.auth import current_caller
 from app.main import create_app
 from app.services.authentication import AuthenticationService
+from app.services.authorization import require_customer, require_owner, require_staff_barber
 from app.services.errors import Forbidden, InvalidCredentials, Unauthenticated
 from app.services.provisioning import DEMO_BARBERS, DEMO_USERS, provision_demo
 from app.services.tokens import TokenService
@@ -87,12 +88,15 @@ def test_existing_token_observes_added_and_removed_staff_assignments(authenticat
 
     caller = authentication.authenticate(token)
     assert caller.managed_barber_ids == tuple(sorted((ALEX, SAM)))
+    assert require_staff_barber(caller, SAM) == caller
 
     with session_factory() as session, session.begin():
         session.execute(delete(StaffBarber).where(StaffBarber.staff_id == staff.id, StaffBarber.barber_id == ALEX))
 
     caller = authentication.authenticate(token)
     assert caller.managed_barber_ids == (SAM,)
+    with pytest.raises(Forbidden):
+        require_staff_barber(caller, ALEX)
 
 
 def test_existing_token_observes_role_changes_and_customer_never_receives_staff_permissions(
@@ -109,6 +113,8 @@ def test_existing_token_observes_role_changes_and_customer_never_receives_staff_
     staff_caller = authentication.authenticate(token)
     assert staff_caller.role == Role.STAFF
     assert staff_caller.managed_barber_ids == (ALEX,)
+    with pytest.raises(Forbidden):
+        require_customer(staff_caller)
 
     with session_factory() as session, session.begin():
         session.get(User, customer.id).role = Role.CUSTOMER
@@ -117,8 +123,37 @@ def test_existing_token_observes_role_changes_and_customer_never_receives_staff_
     customer_caller = authentication.authenticate(token)
     assert customer_caller.role == Role.CUSTOMER
     assert customer_caller.managed_barber_ids == ()
+    with pytest.raises(Forbidden):
+        require_staff_barber(customer_caller, ALEX)
 
 
+def test_service_authorization_rejects_cross_customer_and_unassigned_barber_access(authentication):
+    customer = authentication.login(DEMO_USERS[0].email, PASSWORD).caller
+    barber_staff = authentication.login(DEMO_USERS[3].email, PASSWORD).caller
+    shop_staff = authentication.login(DEMO_USERS[2].email, PASSWORD).caller
+
+    assert require_customer(customer) == customer
+    assert require_owner(customer, customer.id) == customer
+    assert require_staff_barber(barber_staff, ALEX) == barber_staff
+    assert require_staff_barber(shop_staff, SAM) == shop_staff
+
+    with pytest.raises(Forbidden):
+        require_owner(customer, DEMO_USERS[1].id)
+    with pytest.raises(Forbidden):
+        require_owner(barber_staff, customer.id)
+    with pytest.raises(Forbidden):
+        require_customer(shop_staff)
+    with pytest.raises(Forbidden):
+        require_staff_barber(barber_staff, SAM)
+    with pytest.raises(Forbidden):
+        require_staff_barber(customer, ALEX)
+    for guard in (
+        lambda: require_customer(None),
+        lambda: require_owner(None, customer.id),
+        lambda: require_staff_barber(None, ALEX),
+    ):
+        with pytest.raises(Unauthenticated):
+            guard()
 
 
 def test_http_login_and_bearer_dependency_use_the_real_database(
