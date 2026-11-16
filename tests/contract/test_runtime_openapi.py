@@ -16,7 +16,7 @@ from app.services.health import ReadinessService
 
 CONTRACT = Path(__file__).resolve().parents[2] / "api" / "openapi.yaml"
 HEALTH_PATHS = {"/health/live", "/health/ready"}
-IMPLEMENTED_PATHS = HEALTH_PATHS | {"/auth/login"}
+IMPLEMENTED_PATHS = HEALTH_PATHS | {"/auth/login", "/barbers"}
 
 
 @pytest.fixture(scope="module")
@@ -159,3 +159,21 @@ def test_unexpected_health_error_conforms_to_authored_contract(client, baseline,
 
     assert response.status_code == 500
     validate_response(baseline, "/health/ready", response)
+
+
+@pytest.mark.parametrize("path", ["/barbers"])
+def test_native_browsing_schemas_and_queries_match_the_authored_contract(client, baseline, path):
+    native = get_openapi(title="BestApp API", version="0.1.0", routes=client.app.routes)
+    generated = native["paths"][path]["get"]
+    authored = baseline["paths"][path]["get"]
+    assert generated["operationId"] == authored["operationId"]
+    generated_schema = generated["responses"]["200"]["content"]["application/json"]["schema"]
+    authored_schema = authored["responses"]["200"]["content"]["application/json"]["schema"]
+    assert schema_constraints(native, generated_schema) == schema_constraints(baseline, authored_schema)
+    generated_parameters = {p["name"]: p for p in generated.get("parameters", [])}
+    authored_parameters = {p["name"]: p for p in authored.get("parameters", [])}
+    assert generated_parameters.keys() == authored_parameters.keys()
+    for name, parameter in generated_parameters.items():
+        expected = authored_parameters[name]
+        assert (parameter["in"], parameter["required"]) == (expected["in"], expected["required"])
+        assert schema_constraints(native, parameter["schema"]) == schema_constraints(baseline, expected["schema"])

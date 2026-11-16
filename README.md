@@ -5,9 +5,9 @@
 **Course:** SOEN387  
 **Semester:** Fall 2026
 
-BestApp is a barbershop appointment-booking project. The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, and predefined-account login.
+BestApp is a barbershop appointment-booking project. The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, and predefined-account login, and barber listing.
 
-Login and the two health operations are implemented. Availability browsing is the next Phase 3 increment; booking, appointment management, frontend workflows, and notifications remain later-phase work.
+Login, barber listing, and the two health operations are implemented. Availability browsing is the next Phase 3 increment; booking, appointment management, frontend workflows, and notifications remain later-phase work.
 
 ## Repository contents
 
@@ -24,7 +24,7 @@ Login and the two health operations are implemented. Availability browsing is th
 | [scripts/provision_demo.py](scripts/provision_demo.py) | Add demo users, barbers, staff assignments, and future availability |
 | [scripts/verify_phase2_runtime.py](scripts/verify_phase2_runtime.py) | Verify live health behavior, restart persistence, and database-outage recovery |
 
-The seven-operation authored specification remains the milestone design baseline. The running service publishes a subset at `/openapi.json` and `/docs` containing only the implemented login and health operations. Publishing that subset does not establish conformance for unimplemented operations.
+The seven-operation authored specification remains the milestone design baseline. The running service publishes a subset at `/openapi.json` and `/docs` containing only the implemented login, barber listing, and health operations. Publishing that subset does not establish conformance for unimplemented operations.
 
 ## Start with Docker Compose
 
@@ -232,3 +232,7 @@ For the running-container acceptance check:
 Run this separately from the integration suite. It builds/starts this Compose stack, checks live health responses and the published contract, inserts a uniquely named temporary barber, verifies it survives restarts and container recreation with the same volume, and briefly stops PostgreSQL to verify liveness/readiness and recovery. It then removes only its own temporary record and leaves the API/database running. Existing application data is retained.
 
 Phase 2 verification completed on November 15, 2026: all 118 cases passed (98 unit/contract checks and 20 real PostgreSQL integration checks), alongside the running-container restart, persistence, outage, and recovery checks. This evidence covers the foundation and health operations; later business workflows remain unimplemented.
+
+## Browse barbers
+
+`GET /barbers` returns public IDs and display names, ordered by name then ID. The operation is public; unknown or repeated query parameters return 422. Availability browsing is the next increment.
