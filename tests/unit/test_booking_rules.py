@@ -75,3 +75,22 @@ def test_utc_timestamp_preserves_fraction_and_rejects_naive_clock():
         utc_timestamp(START.replace(tzinfo=None))
     with pytest.raises(ValueError):
         booking_notice_satisfied(START, START.replace(tzinfo=None))
+
+
+@pytest.mark.parametrize("operation", ["book", "list_own"])
+def test_customer_permission_is_checked_before_any_database_access(operation):
+    from app.domain.identity import Caller
+    from app.domain.types import Role
+    from app.services.appointments import AppointmentService
+    from app.services.errors import Forbidden, Unauthenticated
+
+    def database_must_not_be_opened():
+        raise AssertionError("An unauthorized caller reached the database")
+
+    service = AppointmentService(database_must_not_be_opened)
+    for caller, error in ((None, Unauthenticated), (Caller("usr_staff", Role.STAFF), Forbidden)):
+        with pytest.raises(error):
+            if operation == "book":
+                service.book(caller, slot_id="slot_test", service=ServiceChoice.HAIRCUT, key="test-key")
+            else:
+                service.list_own(caller)
