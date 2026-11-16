@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.identity import Caller
@@ -54,7 +55,11 @@ def current_customer(request: Request) -> Caller:
     return require_customer(current_caller(request))
 
 
-router = APIRouter(tags=["Appointments"])
+# Declare bearer security for FastAPI's native schema. current_caller still
+# performs strict verification, including rejection of repeated headers.
+router = APIRouter(tags=["Appointments"], dependencies=[
+    Depends(HTTPBearer(scheme_name="bearerAuth", bearerFormat="JWT", auto_error=False)),
+])
 booking_router = APIRouter(route_class=JSONRoute)
 
 
