@@ -23,7 +23,7 @@ from app.services.health import ReadinessService
 
 CONTRACT = Path(__file__).resolve().parents[2] / "api" / "openapi.yaml"
 HEALTH_PATHS = {"/health/live", "/health/ready"}
-IMPLEMENTED_PATHS = HEALTH_PATHS | {"/auth/login", "/barbers", "/availability"}
+IMPLEMENTED_PATHS = HEALTH_PATHS | {"/auth/login", "/barbers", "/availability", "/appointments"}
 
 
 @pytest.fixture(scope="module")
