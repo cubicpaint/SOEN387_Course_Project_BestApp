@@ -5,9 +5,9 @@
 **Course:** SOEN387  
 **Semester:** Fall 2026
 
-BestApp is a barbershop appointment-booking project. The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, and predefined-account login, and barber listing.
+BestApp is a barbershop appointment-booking project. The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, predefined-account login, and service-aware availability browsing.
 
-Login, barber listing, and the two health operations are implemented. Availability browsing is the next Phase 3 increment; booking, appointment management, frontend workflows, and notifications remain later-phase work.
+Login, barber listing, availability browsing, and the two health operations are implemented. Booking, appointment management, frontend workflows, and notifications remain later-phase work.
 
 ## Repository contents
 
@@ -24,7 +24,7 @@ Login, barber listing, and the two health operations are implemented. Availabili
 | [scripts/provision_demo.py](scripts/provision_demo.py) | Add demo users, barbers, staff assignments, and future availability |
 | [scripts/verify_phase2_runtime.py](scripts/verify_phase2_runtime.py) | Verify live health behavior, restart persistence, and database-outage recovery |
 
-The seven-operation authored specification remains the milestone design baseline. The running service publishes a subset at `/openapi.json` and `/docs` containing only the implemented login, barber listing, and health operations. Publishing that subset does not establish conformance for unimplemented operations.
+The seven-operation authored specification remains the milestone design baseline. The running service publishes a subset at `/openapi.json` and `/docs` containing only the five implemented login, browsing, and health operations. Publishing that subset does not establish conformance for unimplemented operations.
 
 ## Start with Docker Compose
 
@@ -113,6 +113,18 @@ A successful response contains `accessToken`, `tokenType: "Bearer"`, `expiresIn`
 The reusable bearer dependency verifies the token and reloads current database identity and staff assignments. Service-level guards enforce customer role, ownership, and staff/barber permissions independently of HTTP. Tests exercise the dependency on routes registered only inside tests; protected appointment operations remain Phase 4 work.
 
 Malformed or duplicate JSON members return `400`; unsupported media returns `415`; invalid fields or query parameters return `422`. Passwords, hashes, and tokens are excluded from application logs. Keep tokens in browser memory when the later testing interface is added.
+
+## Browse barbers and availability
+
+`GET /barbers` returns public `id` and `displayName` values, ordered by display name and then ID. An empty shop returns `{"barbers": []}`.
+
+`GET /availability?barberId=bar_demo_alex&date=2026-11-17&service=both` illustrates the query shape; replace the date with one of the future Toronto dates provisioned on your run. Required service choices are `haircut`, `beard` (30 minutes each), or `both` (60 minutes).
+
+The response includes `barberId`, `date`, `timeZone`, `service`, `durationMinutes`, and `slots`. Each slot has the first block's stable `slotId`, UTC `startTime`, and the entire service's UTC `endTime`, ending in `Z`. A combined service needs two consecutive enabled, unallocated blocks for the same barber. Occupied, disabled, past, too-soon, incomplete, and off-grid starts are excluded. Exactly two elapsed hours of notice is eligible.
+
+Dates mean `America/Toronto`, from one local midnight to the next. Daylight-saving dates may contain 23 or 25 hours; repeated local times remain distinct UTC instants and slot IDs. A start near midnight may use a continuation block on the next local date. Results are sorted by UTC start time. A known barber without eligible starts returns `200` with `slots: []`; an unknown barber returns `404 barber_not_found`. There is no additional booking horizon.
+
+Both operations are public and ignore authorization headers. Browsing does not reserve blocks or filter a particular customer's existing appointments. Unknown/repeated query parameters and invalid values return `422 validation_error`; database outages return controlled `503` errors. Appointment creation and conflict rechecks remain Phase 4 work.
 
 ## Local Python development
 
@@ -232,7 +244,3 @@ For the running-container acceptance check:
 Run this separately from the integration suite. It builds/starts this Compose stack, checks live health responses and the published contract, inserts a uniquely named temporary barber, verifies it survives restarts and container recreation with the same volume, and briefly stops PostgreSQL to verify liveness/readiness and recovery. It then removes only its own temporary record and leaves the API/database running. Existing application data is retained.
 
 Phase 2 verification completed on November 15, 2026: all 118 cases passed (98 unit/contract checks and 20 real PostgreSQL integration checks), alongside the running-container restart, persistence, outage, and recovery checks. This evidence covers the foundation and health operations; later business workflows remain unimplemented.
-
-## Browse barbers
-
-`GET /barbers` returns public IDs and display names, ordered by name then ID. The operation is public; unknown or repeated query parameters return 422. Availability browsing is the next increment.

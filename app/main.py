@@ -27,12 +27,12 @@ from app.services.tokens import TokenService
 def runtime_openapi() -> dict:
     source = Path(__file__).resolve().parents[1] / "api" / "openapi.yaml"
     document = deepcopy(yaml.safe_load(source.read_text(encoding="utf-8")))
-    implemented = ("/health/live", "/health/ready", "/auth/login", "/barbers")
+    implemented = ("/health/live", "/health/ready", "/auth/login", "/barbers", "/availability")
     document["paths"] = {path: document["paths"][path] for path in implemented}
-    document["info"]["description"] = "Implemented health, login, and barber listing. Availability and appointments remain design-only."
-    document["x-status"] = "phase-3-in-progress"
+    document["info"]["description"] = "Implemented health, login, and public browsing operations. Appointment operations remain design-only."
+    document["x-status"] = "phase-3-implemented"
     document["servers"] = [{"url": "/", "description": "Current service"}]
-    document["tags"] = [{"name": tag} for tag in ("Health", "Authentication", "Barbers")]
+    document["tags"] = [{"name": tag} for tag in ("Health", "Authentication", "Barbers", "Availability")]
     return document
 
 
