@@ -1,4 +1,4 @@
-"""Core persistence schema; booking use cases are implemented in later phases."""
+"""Core persistence mappings for identity, availability, bookings, and outcomes."""
 
 from datetime import datetime
 from typing import Any
