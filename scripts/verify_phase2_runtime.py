@@ -76,8 +76,8 @@ def verify() -> None:
             correlation_ids.append(UUID(headers["X-Correlation-ID"]))
         require(len(set(correlation_ids)) == 2, "Correlation IDs must be fresh.")
         status, document, _ = response("/openapi.json")
-        require(status == 200 and set(document["paths"]) == {"/health/live", "/health/ready"},
-                "Runtime contract must expose only implemented health paths.")
+        require(status == 200 and set(document["paths"]) == {"/health/live", "/health/ready", "/auth/login"},
+                "Runtime contract must expose only implemented paths.")
         status, body, _ = response("/health/live?unexpected=1&unexpected=2")
         require(status == 422 and body["error"]["code"] == "validation_error", "Invalid query was accepted.")
         print("PASS: running health responses, headers, validation, and published contract", flush=True)

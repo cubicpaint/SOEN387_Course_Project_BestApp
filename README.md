@@ -5,9 +5,9 @@
 **Course:** SOEN387  
 **Semester:** Fall 2026
 
-BestApp is a barbershop appointment-booking project. Phase 2 provides the HTTP runtime, PostgreSQL schema, migrations, health checks, structured logs, and explicit demo provisioning.
+BestApp is a barbershop appointment-booking project. The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, and predefined-account login.
 
-Only the two health operations are implemented. Login, availability browsing, booking, appointment management, frontend workflows, and notifications remain later-phase work.
+Login and the two health operations are implemented. Availability browsing is the next Phase 3 increment; booking, appointment management, frontend workflows, and notifications remain later-phase work.
 
 ## Repository contents
 
@@ -24,7 +24,7 @@ Only the two health operations are implemented. Login, availability browsing, bo
 | [scripts/provision_demo.py](scripts/provision_demo.py) | Add demo users, barbers, staff assignments, and future availability |
 | [scripts/verify_phase2_runtime.py](scripts/verify_phase2_runtime.py) | Verify live health behavior, restart persistence, and database-outage recovery |
 
-The seven-operation authored specification remains the milestone design baseline. The running service publishes a subset at `/openapi.json` and `/docs` containing only the implemented health operations. Publishing that subset does not establish conformance for unimplemented operations.
+The seven-operation authored specification remains the milestone design baseline. The running service publishes a subset at `/openapi.json` and `/docs` containing only the implemented login and health operations. Publishing that subset does not establish conformance for unimplemented operations.
 
 ## Start with Docker Compose
 
@@ -100,9 +100,17 @@ For noninteractive provisioning, supply `BESTAPP_DEMO_PASSWORD` through the proc
 | `shop.staff@example.com` | Staff assigned to every current barber |
 | `barber.staff@example.com` | Staff assigned to demo barber Alex |
 
-The command creates demo barbers Alex and Sam, plus 30-minute blocks from 09:00 to 17:00 on the next seven Toronto dates (224 blocks for two barbers). It converts those local intervals to UTC instants. These are demonstration records; Phase 2 has no login or availability HTTP operation.
+The command creates demo barbers Alex and Sam, plus 30-minute blocks from 09:00 to 17:00 on the next seven Toronto dates (224 blocks for two barbers). It converts those local intervals to UTC instants.
 
 Provisioning runs in one transaction. Rerunning it reuses existing users and slots, preserves password hashes, disabled blocks, versions, and bookings, and adds missing future blocks. It does not reset passwords or move existing slot identities. If an existing demo identity conflicts with the required setup, it reports a controlled failure and rolls back.
+
+## Log in
+
+Send `POST /auth/login` with `Content-Type: application/json` and an object containing `email` and `password`. Use a provisioned account and its privately supplied demo password. Email matching is exact and case-sensitive; input is neither trimmed nor normalized. The interactive `/docs` request form can send the JSON body.
+
+A successful response contains `accessToken`, `tokenType: "Bearer"`, `expiresIn`, and `user` (ID, role, and managed barber IDs). Unknown email and incorrect password both return `401 invalid_credentials` with the same message. Staff can log in. Public operations ignore authorization headers. No refresh-token or registration operation is provided.
+
+Malformed or duplicate JSON members return `400`; unsupported media returns `415`; invalid fields or query parameters return `422`. Passwords, hashes, and tokens are excluded from application logs. Keep tokens in browser memory when the later testing interface is added.
 
 ## Local Python development
 
@@ -222,5 +230,3 @@ For the running-container acceptance check:
 Run this separately from the integration suite. It builds/starts this Compose stack, checks live health responses and the published contract, inserts a uniquely named temporary barber, verifies it survives restarts and container recreation with the same volume, and briefly stops PostgreSQL to verify liveness/readiness and recovery. It then removes only its own temporary record and leaves the API/database running. Existing application data is retained.
 
 Phase 2 verification completed on November 15, 2026: all 118 cases passed (98 unit/contract checks and 20 real PostgreSQL integration checks), alongside the running-container restart, persistence, outage, and recovery checks. This evidence covers the foundation and health operations; later business workflows remain unimplemented.
-
-The authentication service can verify provisioned passwords and issue tokens. The HTTP login operation is the next increment.

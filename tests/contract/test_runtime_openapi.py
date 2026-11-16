@@ -16,6 +16,7 @@ from app.services.health import ReadinessService
 
 CONTRACT = Path(__file__).resolve().parents[2] / "api" / "openapi.yaml"
 HEALTH_PATHS = {"/health/live", "/health/ready"}
+IMPLEMENTED_PATHS = HEALTH_PATHS | {"/auth/login"}
 
 
 @pytest.fixture(scope="module")
@@ -63,15 +64,15 @@ def validate_response(baseline, path, response):
         Draft202012Validator(header["schema"], format_checker=FormatChecker()).validate(value)
 
 
-def test_runtime_contract_publishes_only_implemented_health_operations(client, baseline):
+def test_runtime_contract_publishes_only_implemented_operations(client, baseline):
     response = client.get("/openapi.json")
 
     assert response.status_code == 200
     runtime = response.json()
     validate(runtime)
     assert runtime["openapi"] == "3.1.0"
-    assert set(runtime["paths"]) == HEALTH_PATHS
-    assert runtime["paths"] == {path: baseline["paths"][path] for path in HEALTH_PATHS}
+    assert set(runtime["paths"]) == IMPLEMENTED_PATHS
+    assert runtime["paths"] == {path: baseline["paths"][path] for path in IMPLEMENTED_PATHS}
     for name in ("LivenessResponse", "ReadinessResponse", "Error"):
         assert runtime["components"]["schemas"][name] == baseline["components"]["schemas"][name]
     for name in ("ValidationError", "InternalError", "ServiceUnavailable"):
@@ -88,7 +89,7 @@ def test_native_health_response_models_match_the_authored_schemas(client, baseli
             return [without_titles(item) for item in value]
         return value
 
-    assert set(native["paths"]) == HEALTH_PATHS
+    assert set(native["paths"]) == IMPLEMENTED_PATHS
     for path in HEALTH_PATHS:
         generated = native["paths"][path]["get"]
         authored = baseline["paths"][path]["get"]
@@ -96,6 +97,31 @@ def test_native_health_response_models_match_the_authored_schemas(client, baseli
         generated_schema = generated["responses"]["200"]["content"]["application/json"]["schema"]
         authored_schema = authored["responses"]["200"]["content"]["application/json"]["schema"]
         assert without_titles(resolve(native, generated_schema)) == resolve(baseline, authored_schema)
+
+
+def schema_constraints(spec, value):
+    """Compare validation constraints after expanding refs and removing prose."""
+    if isinstance(value, dict):
+        value = resolve(spec, value)
+        return {
+            key: schema_constraints(spec, item)
+            for key, item in value.items()
+            if key not in {"title", "description", "examples", "example"}
+        }
+    if isinstance(value, list):
+        return [schema_constraints(spec, item) for item in value]
+    return value
+
+
+def test_native_login_models_match_the_authored_contract(client, baseline):
+    native = get_openapi(title="BestApp API", version="0.1.0", routes=client.app.routes)
+    generated = native["paths"]["/auth/login"]["post"]
+    authored = baseline["paths"]["/auth/login"]["post"]
+    assert generated["operationId"] == authored["operationId"]
+    assert schema_constraints(native, generated["requestBody"]) == schema_constraints(baseline, authored["requestBody"])
+    generated_schema = generated["responses"]["200"]["content"]["application/json"]["schema"]
+    authored_schema = authored["responses"]["200"]["content"]["application/json"]["schema"]
+    assert schema_constraints(native, generated_schema) == schema_constraints(baseline, authored_schema)
 
 
 @pytest.mark.parametrize("path", sorted(HEALTH_PATHS))
