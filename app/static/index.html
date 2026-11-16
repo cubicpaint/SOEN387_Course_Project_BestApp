@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Browse barber availability and manage your upcoming BestApp bookings.">
+  <title>BestApp — Book an appointment</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">YOUR NEXT VISIT</p>
+    <h1>BestApp</h1>
+    <p>Choose a barber, find a time, and book your appointment.</p>
+  </header>
+  <main>
+    <noscript><p class="notice">Enable JavaScript to log in and use the booking interface.</p></noscript>
+    <section aria-labelledby="account-heading">
+      <h2 id="account-heading">1. Your account</h2>
+      <form id="login-form">
+        <div class="fields">
+          <label for="email">Email<input id="email" type="email" autocomplete="username" maxlength="254" required></label>
+          <label for="password">Password<input id="password" type="password" autocomplete="current-password" maxlength="1024" required></label>
+        </div>
+        <button id="login-button" type="submit">Log in</button>
+      </form>
+      <div id="signed-in" hidden>
+        <p id="identity"></p>
+        <button id="logout-button" type="button" class="secondary">Log out</button>
+      </div>
+      <p id="account-status" role="status" aria-live="polite">Browse availability below. Log in with a predefined customer account to book.</p>
+    </section>
+
+    <section aria-labelledby="browse-heading">
+      <h2 id="browse-heading">2. Find an appointment</h2>
+      <p>All dates and times are shown in <strong>America/Toronto</strong>. Availability is checked again when you book.</p>
+      <form id="availability-form">
+        <fieldset id="browse-fields">
+          <legend>Appointment preferences</legend>
+          <div class="fields">
+            <label for="barber">Barber<select id="barber" required><option value="">Loading barbers…</option></select></label>
+            <label for="service">Service<select id="service"><option value="haircut">Haircut — 30 minutes</option><option value="beard">Beard — 30 minutes</option><option value="both">Haircut and beard — 60 minutes</option></select></label>
+            <label for="date">Toronto date<input id="date" type="date" required></label>
+          </div>
+          <button id="availability-button" type="submit">Find availability</button>
+        </fieldset>
+      </form>
+      <p id="availability-status" role="status" aria-live="polite"></p>
+      <fieldset id="slot-options" hidden>
+        <legend>Choose a starting time</legend>
+        <div id="slots" class="slots"></div>
+      </fieldset>
+    </section>
+
+    <section aria-labelledby="booking-heading">
+      <h2 id="booking-heading">3. Confirm your booking</h2>
+      <p id="selection">Select an available starting time above.</p>
+      <p class="notice" id="change-restriction"><strong>Before you confirm:</strong> online cancellation or rescheduling requires at least 24 hours before the appointment starts. If you book less than 24 hours ahead, you cannot later cancel or reschedule it online. Online changes are not available in this interface.</p>
+      <button id="book-button" type="button" disabled>Confirm booking</button>
+      <button id="retry-button" type="button" hidden>Retry the same booking</button>
+      <p id="booking-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section aria-labelledby="appointments-heading">
+      <h2 id="appointments-heading">Your upcoming appointments</h2>
+      <button id="appointments-button" type="button" class="secondary" disabled>Refresh appointments</button>
+      <p id="appointments-status" role="status" aria-live="polite">Log in as a customer to view your appointments.</p>
+      <ul id="appointments" class="appointments"></ul>
+    </section>
+  </main>
+  <footer>BestApp · One barbershop, three service choices.</footer>
+</body>
+</html>

@@ -14,6 +14,7 @@ from app.interface.appointments import router as appointments_router
 from app.interface.auth import router as auth_router
 from app.interface.browsing import router as browsing_router
 from app.interface.errors import error_response
+from app.interface.frontend import router as frontend_router
 from app.interface.health import router
 from app.interface.middleware import RequestContextMiddleware
 from app.interface.validation import InputError
@@ -62,6 +63,7 @@ def create_app(settings: Settings | None = None, auth_settings: AuthSettings | N
     application.include_router(auth_router)
     application.include_router(browsing_router)
     application.include_router(appointments_router)
+    application.include_router(frontend_router)
 
     @application.exception_handler(InputError)
     async def invalid_http_input(request: Request, error: InputError):

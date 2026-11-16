@@ -1,0 +1,34 @@
+:root { color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #1f2933; background: #f3f5f3; line-height: 1.55; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header, main, footer { max-width: 900px; margin: auto; padding: 1.5rem; }
+header { padding-top: 2.5rem; padding-bottom: .75rem; }
+h1 { font-size: 2.5rem; line-height: 1.1; margin: .25rem 0 .75rem; color: #164b3b; }
+h2 { font-size: 1.2rem; margin-top: 0; }
+.eyebrow { font-size: .8rem; font-weight: 700; letter-spacing: .12em; color: #3a6557; }
+section { background: white; padding: 1.5rem; margin-bottom: 1.25rem; border: 1px solid #d8e0da; border-radius: .5rem; }
+p { margin-top: .75rem; }
+fieldset { border: 1px solid #ccd5ce; padding: 1rem; margin: 0 0 1rem; border-radius: .3rem; min-width: 0; }
+legend { padding: 0 .4rem; font-weight: 600; }
+.fields { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.fields label { flex: 1 1 180px; display: flex; flex-direction: column; gap: .35rem; font-weight: 600; }
+input, select, button { font: inherit; border-radius: .3rem; }
+input, select { width: 100%; min-height: 2.75rem; padding: .5rem; border: 1px solid #7c8d80; background: white; color: inherit; }
+button { min-height: 2.75rem; padding: .5rem 1rem; border: 1px solid #164b3b; background: #164b3b; color: white; cursor: pointer; }
+button:hover:enabled { background: #22664f; }
+button.secondary { color: #164b3b; background: white; }
+button.secondary:hover:enabled { background: #eef4ef; }
+button:disabled { opacity: .55; cursor: default; }
+:focus-visible { outline: 3px solid #a14e00; outline-offset: 3px; }
+.notice { padding: 1rem; border-left: 4px solid #916000; background: #fff6df; }
+.slots { display: grid; gap: .6rem; }
+.slot { display: flex; align-items: flex-start; gap: .7rem; padding: .7rem; border: 1px solid #ccd5ce; border-radius: .25rem; cursor: pointer; }
+.slot:has(input:checked) { background: #edf5ef; border-color: #164b3b; }
+.slot input { width: 1.15rem; height: 1.15rem; min-height: 0; margin-top: .2rem; flex-shrink: 0; accent-color: #164b3b; }
+.appointments { list-style: none; padding: 0; }
+.appointments li { padding: 1rem 0; border-bottom: 1px solid #d8e0da; }
+.appointments span, .appointments small { display: block; }
+[role="status"] { overflow-wrap: anywhere; }
+footer { font-size: .85rem; color: #526159; padding-top: 0; }
+[hidden] { display: none !important; }
+@media (max-width: 480px) { header, main, footer { padding-left: 1rem; padding-right: 1rem; } section { padding: 1rem; } }
