@@ -143,10 +143,14 @@ def test_appointment_operations_accept_no_query_parameters(client, method, query
 
 
 def test_replay_keeps_body_and_generates_fresh_correlation_headers(client):
+    client.app.state.appointments.book.side_effect = [
+        BookingOutcome(201, APPOINTMENT), BookingOutcome(201, dict(reversed(list(APPOINTMENT.items())))),
+    ]
     first = client.post("/appointments", json=BODY, headers=HEADERS)
     replay = client.post("/appointments", json=BODY, headers=HEADERS)
     assert first.status_code == replay.status_code == 201
     assert first.json() == replay.json() == APPOINTMENT
+    assert first.content == replay.content
     assert first.headers["X-Correlation-ID"] != replay.headers["X-Correlation-ID"]
     assert replay.headers["Cache-Control"] == "no-store"
 

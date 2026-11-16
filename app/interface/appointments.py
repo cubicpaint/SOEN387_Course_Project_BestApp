@@ -1,5 +1,6 @@
 """Appointment HTTP representations matching the authored milestone contract."""
 
+import json
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Request
@@ -17,6 +18,15 @@ from app.services.authorization import require_customer
 
 AppointmentId = Annotated[str, Field(pattern=r"^apt_[A-Za-z0-9_-]+$", max_length=64)]
 KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+
+
+class BookingJSONResponse(JSONResponse):
+    def render(self, content: object) -> bytes:
+        # JSONB can reorder object keys. Serialize both the first response and
+        # its replay canonically so the raw HTTP bodies also remain identical.
+        return json.dumps(
+            content, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
 
 
 class BookingRequest(BaseModel):
@@ -80,7 +90,7 @@ def book_appointment(
     if outcome.status == 201:
         AppointmentResponse.model_validate(outcome.body)
     # Replays preserve their stored JSON representation, including timestamps.
-    return JSONResponse(status_code=outcome.status, content=outcome.body)
+    return BookingJSONResponse(status_code=outcome.status, content=outcome.body)
 
 
 router.include_router(booking_router)

@@ -43,6 +43,7 @@ def test_json_order_and_whitespace_replay_the_same_database_outcome(client, sess
     repeated = client.post("/appointments", headers=headers(), content=' { "service" : "both",\n "slotId" : "slot_alex_0" } ')
     assert original.status_code == repeated.status_code == 201
     assert repeated.json() == original.json()
+    assert repeated.content == original.content
     assert original.headers["X-Correlation-ID"] != repeated.headers["X-Correlation-ID"]
     assert original.headers["Cache-Control"] == repeated.headers["Cache-Control"] == "no-store"
     state = stored_state(session_factory)
