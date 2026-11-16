@@ -35,6 +35,12 @@ services:
 
   api:
     <<: *application
+    environment:
+      <<: *application-environment
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ISSUER: ${JWT_ISSUER:-bestapp}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-bestapp-api}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-1800}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

@@ -8,7 +8,7 @@ import yaml
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 
-from app.config import Settings, load_settings
+from app.config import AuthSettings, Settings, load_auth_settings, load_settings
 from app.data.database import create_engine_from_settings
 from app.interface.errors import error_response
 from app.interface.health import router
@@ -28,8 +28,9 @@ def runtime_openapi() -> dict:
     return document
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, auth_settings: AuthSettings | None = None) -> FastAPI:
     settings = settings if settings is not None else load_settings()
+    auth_settings = auth_settings if auth_settings is not None else load_auth_settings()
     configure_logging()
     engine = create_engine_from_settings(settings)
 
@@ -40,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application = FastAPI(title="BestApp API", version="0.1.0", debug=False, lifespan=lifespan)
     application.state.settings = settings
+    application.state.auth_settings = auth_settings
     application.state.engine = engine
     application.state.readiness = ReadinessService(engine)
     application.add_middleware(RequestContextMiddleware)

@@ -59,3 +59,46 @@ def load_settings() -> Settings:
     except ValidationError as error:
         fields = sorted({str(item["loc"][0]) for item in error.errors(include_input=False)})
         raise ConfigurationError("Missing or invalid configuration: " + ", ".join(fields)) from None
+
+
+class AuthSettings(BaseSettings):
+    """API-only settings; migrations and provisioning do not need a signing key."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+        hide_input_in_errors=True,
+    )
+
+    jwt_secret: SecretStr = Field(alias="JWT_SECRET")
+    jwt_issuer: str = Field(default="bestapp", min_length=1, alias="JWT_ISSUER")
+    jwt_audience: str = Field(default="bestapp-api", min_length=1, alias="JWT_AUDIENCE")
+    jwt_ttl_seconds: int = Field(default=1800, ge=1, le=3600, alias="JWT_TTL_SECONDS")
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def validate_jwt_secret(cls, value: SecretStr) -> SecretStr:
+        secret = value.get_secret_value()
+        placeholders = ("replace_me", "replace-me", "change_me", "change-me", "changeme", "placeholder")
+        if len(secret.encode("utf-8")) < 32 or not secret.strip() or any(
+            placeholder in secret.casefold() for placeholder in placeholders
+        ):
+            raise ValueError("Use a private random signing secret of at least 32 bytes.")
+        return value
+
+    @field_validator("jwt_issuer", "jwt_audience")
+    @classmethod
+    def validate_token_recipient(cls, value: str) -> str:
+        if not value.strip() or value != value.strip():
+            raise ValueError("Use a nonempty value without surrounding whitespace.")
+        return value
+
+
+def load_auth_settings() -> AuthSettings:
+    try:
+        return AuthSettings()
+    except ValidationError as error:
+        fields = sorted({str(item["loc"][0]) for item in error.errors(include_input=False)})
+        raise ConfigurationError("Missing or invalid configuration: " + ", ".join(fields)) from None

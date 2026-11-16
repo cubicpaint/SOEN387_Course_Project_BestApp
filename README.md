@@ -36,7 +36,7 @@ Copy the placeholder configuration:
 Copy-Item .env.example .env
 ```
 
-Edit `.env`: replace both occurrences of `replace_me` with the same randomly generated URL-safe database password. Use letters, digits, `_`, and `-` so the password is safe inside the connection URL. Keep `.env` private and uncommitted. There are no working credentials in `.env.example`.
+Edit `.env`: replace both database occurrences of `replace_me` with the same randomly generated URL-safe database password. Use letters, digits, `_`, and `-` so the password is safe inside the connection URL. Set `JWT_SECRET` to a separate private secret generated from at least 32 random bytes, for example with Python's `secrets.token_urlsafe(32)`. Keep `.env` private and uncommitted. There are no working credentials in `.env.example`.
 
 ```powershell
 docker compose up -d --build api
@@ -73,9 +73,13 @@ docker compose run --rm migrate python -m alembic current
 | `DB_CONNECT_TIMEOUT` | Connection timeout in seconds; default 3, range 1–30 |
 | `DB_QUERY_TIMEOUT_MS` | Database statement timeout in milliseconds; default 2000, range 1–30000 |
 | `DB_POOL_TIMEOUT` | Connection-pool wait in seconds; default 3, range 1–30 |
+| `JWT_SECRET` | Required at API startup; separate private random signing secret of at least 32 bytes; placeholders are rejected |
+| `JWT_ISSUER` | Expected token issuer; default `bestapp` |
+| `JWT_AUDIENCE` | Expected token audience; default `bestapp-api` |
+| `JWT_TTL_SECONDS` | Token lifetime in seconds; default 1800, range 1–3600 |
 | `BESTAPP_DEMO_PASSWORD` | Optional password for new demo users; Compose reads it from `.env` or the process environment, local provisioning reads the process environment; otherwise prompted privately |
 
-Host Python settings read `.env`; process environment values take precedence. Compose constructs its own `DATABASE_URL` using the `db` hostname. Use matching credentials in both places. Missing/invalid required application configuration stops startup with a field-name diagnostic, without printing its value. JWT and email-provider settings are not required in Phase 2.
+Host Python settings read `.env`; process environment values take precedence. Compose constructs its own `DATABASE_URL` using the `db` hostname. Use matching credentials in both places. Missing/invalid required application configuration stops startup with a field-name diagnostic, without printing its value. JWT settings are validated only when the API is constructed; database migrations and demo provisioning do not require a signing secret. Email-provider settings remain later-phase work.
 
 ## Provision demonstration data
 

@@ -9,7 +9,7 @@ from fastapi.openapi.utils import get_openapi
 from jsonschema import Draft202012Validator, FormatChecker
 from openapi_spec_validator import validate
 
-from app.config import Settings
+from app.config import AuthSettings, Settings
 from app.main import create_app
 from app.services.health import ReadinessService
 
@@ -30,7 +30,8 @@ def client(monkeypatch):
         DATABASE_URL="postgresql+psycopg://bestapp:contract-test-secret@localhost:5432/bestapp",
         _env_file=None,
     )
-    with TestClient(create_app(settings), raise_server_exceptions=False) as http:
+    auth = AuthSettings(JWT_SECRET="private-contract-test-signing-key-only-12345", _env_file=None)
+    with TestClient(create_app(settings, auth), raise_server_exceptions=False) as http:
         yield http
 
 
