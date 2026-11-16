@@ -23,6 +23,7 @@ Login, barber listing, availability browsing, and the two health operations are 
 | [compose.yaml](compose.yaml) | PostgreSQL, a one-off migration job, API, and opt-in provisioning command |
 | [scripts/provision_demo.py](scripts/provision_demo.py) | Add demo users, barbers, staff assignments, and future availability |
 | [scripts/verify_phase2_runtime.py](scripts/verify_phase2_runtime.py) | Verify live health behavior, restart persistence, and database-outage recovery |
+| [scripts/verify_phase3_runtime.py](scripts/verify_phase3_runtime.py) | Verify live login, public browsing, occupied intervals, and contracted errors using temporary fixtures |
 
 The seven-operation authored specification remains the milestone design baseline. The running service publishes a subset at `/openapi.json` and `/docs` containing only the five implemented login, browsing, and health operations. Publishing that subset does not establish conformance for unimplemented operations.
 
@@ -152,7 +153,7 @@ Stop the Compose API first if it already occupies port 8000. For local provision
 
 ## Layers and durable data
 
-`app/interface` handles HTTP validation and response translation. `app/services` coordinates readiness and demo provisioning, including provisioning's transaction boundary. `app/domain` contains plain Python value types. `app/data` contains SQLAlchemy mappings, session construction, database probes, and the focused demo repository. `app/main.py` connects these components. Handlers contain no booking rules.
+`app/interface` validates HTTP shapes/media/headers and translates service results. `app/services` coordinates authentication, authorization, browsing, readiness, and provisioning. `app/domain` contains trusted caller/value types and pure duration, notice, and timezone rules. `app/data` contains SQLAlchemy mappings, sessions, database probes, and focused user, browsing, and provisioning repositories. `app/main.py` connects them. SQL and scheduling rules remain outside handlers; provisioning owns its transaction.
 
 The first migration creates `users`, `barbers`, `staff_barbers`, `availability_blocks`, `appointments`, `slot_allocations`, and `idempotency_records`. Foreign keys, service/duration checks, unique barber/start intervals, unique active block allocations, and caller-scoped key uniqueness provide foundational integrity. Timestamps are timezone-aware PostgreSQL values; slot IDs remain attached to their original barber/interval.
 
@@ -206,11 +207,11 @@ The test suite includes OpenAPI validation, so you can run the pytest command on
 - Availability example ordering, distinct slot IDs, and Toronto local dates across timezone transitions.
 - Idempotency-key format, response-header declarations, and placeholder credentials.
 
-The original authored-contract suite contains 52 tests. Additional runtime-contract tests check the health-only published schema, native response-model consistency, and HTTP health responses. None establishes that authentication, booking, concurrency, or booking retries work.
+The original authored-contract suite contains 52 tests. Additional runtime-contract checks compare native login/browsing/health models and query constraints with the authored specification, validate the five-operation published subset, and check actual HTTP success/error bodies and headers using the ASGI test client. These use controlled dependencies; separate unit, real PostgreSQL, and live acceptance checks provide further authentication and availability evidence. Booking, concurrency, and booking retries remain unimplemented.
 
 Example credentials are nonfunctional placeholders. Example dates illustrate request and response formats and are not live availability.
 
-## Test the Phase 2 foundation
+## Test the application
 
 Run checks that do not require PostgreSQL:
 
@@ -233,7 +234,7 @@ $env:TEST_DATABASE_URL = 'postgresql+psycopg://bestapp:YOUR_PRIVATE_PASSWORD@loc
 Remove-Item Env:TEST_DATABASE_URL
 ```
 
-Integration fixtures require a database name ending in `_test`. Each test creates, migrates, and finally removes its own randomly named schema, without resetting application tables. Tests cover migrations/model consistency, database constraints, rollback, schema readiness, and safe additive provisioning. Without `TEST_DATABASE_URL`, these tests explicitly skip; a passing offline suite is not PostgreSQL evidence.
+Integration fixtures require a database name ending in `_test`. Each test creates, migrates, and finally removes its own randomly named schema, without resetting application tables. Tests cover migrations/model consistency, database constraints, rollback, readiness, provisioning, real login/current permissions, and availability queries. Without `TEST_DATABASE_URL`, these tests explicitly skip; a passing offline suite is not PostgreSQL evidence.
 
 For the running-container acceptance check:
 
@@ -243,4 +244,15 @@ For the running-container acceptance check:
 
 Run this separately from the integration suite. It builds/starts this Compose stack, checks live health responses and the published contract, inserts a uniquely named temporary barber, verifies it survives restarts and container recreation with the same volume, and briefly stops PostgreSQL to verify liveness/readiness and recovery. It then removes only its own temporary record and leaves the API/database running. Existing application data is retained.
 
-Phase 2 verification completed on November 15, 2026: all 118 cases passed (98 unit/contract checks and 20 real PostgreSQL integration checks), alongside the running-container restart, persistence, outage, and recovery checks. This evidence covers the foundation and health operations; later business workflows remain unimplemented.
+Phase 2 verification completed on November 15, 2026: all 118 cases passed (98 unit/contract checks and 20 real PostgreSQL integration checks), alongside the running-container restart, persistence, outage, and recovery checks. That record covers the foundation and health operations; Phase 3 extends the evidence with authentication and browsing checks below.
+
+For Phase 3 live HTTP acceptance, start the API with the current build and run:
+
+```powershell
+docker compose up -d --build api
+.\.venv\Scripts\python.exe -m scripts.verify_phase3_runtime
+```
+
+This command needs the host development dependencies and the same database/JWT configuration as the API. It inserts a uniquely named temporary customer, barber, four blocks, and an occupied interval; checks real login/token issuance, public browsing, complete service durations, and negative responses against OpenAPI; then removes only its own fixtures. It preserves demonstration data and never prints passwords or tokens. Run acceptance commands separately from PostgreSQL integration tests because the Phase 2 command restarts the database.
+
+Token tests cover signature/algorithm/required claims, issuer/audience, exact expiry, and malformed/duplicate bearer headers. Service tests reject unauthorized callers without HTTP routing. Availability checks cover occupied/disabled/missing blocks, the exact two-hour boundary, UTC/local date differences, midnight continuation, both daylight-saving changes, stable slot IDs, and calendar limits.

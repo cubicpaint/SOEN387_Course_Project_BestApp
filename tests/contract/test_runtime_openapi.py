@@ -157,10 +157,48 @@ def test_native_browsing_schemas_and_queries_match_the_authored_contract(client,
         assert schema_constraints(native, parameter["schema"]) == schema_constraints(baseline, expected["schema"])
 
 
+@pytest.mark.parametrize("method,path,body", [
+    ("post", "/auth/login", {"email": "customer@example.test", "password": "private test password"}),
+    ("get", "/barbers", None),
+    ("get", "/availability?barberId=bar_one&date=2026-11-17&service=both", None),
+])
+def test_login_and_browsing_success_http_responses_conform(client, baseline, method, path, body):
+    response = client.request(method, path, json=body) if body is not None else client.get(path)
+    assert response.status_code == 200
+    validate_response(baseline, path.split("?")[0], response, method)
 
 
+@pytest.mark.parametrize("path,component,operation,failure,status", [
+    ("/auth/login", "authentication", "login", InvalidCredentials(), 401),
+    ("/auth/login", "authentication", "login", ServiceUnavailable(), 503),
+    ("/barbers", "browsing", "list_barbers", ServiceUnavailable(), 503),
+    ("/availability", "browsing", "list_availability", BarberNotFound(), 404),
+    ("/availability", "browsing", "list_availability", ServiceUnavailable(), 503),
+    ("/availability", "browsing", "list_availability", RuntimeError("private error"), 500),
+])
+def test_login_and_browsing_service_errors_conform(client, baseline, path, component, operation, failure, status):
+    getattr(getattr(client.app.state, component), operation).side_effect = failure
+    if path == "/auth/login":
+        response = client.post(path, json={"email": "customer@example.test", "password": "private test password"})
+        method = "post"
+    else:
+        query = "?barberId=bar_one&date=2026-11-17&service=both" if path == "/availability" else ""
+        response = client.get(path + query)
+        method = "get"
+    assert response.status_code == status
+    validate_response(baseline, path, response, method)
 
 
+@pytest.mark.parametrize("body,media,status", [
+    ("{", "application/json", 400),
+    ('{"email":"one@example.test","email":"two@example.test"}', "application/json", 400),
+    ("{}", "text/plain", 415),
+    ("{}", "application/json", 422),
+])
+def test_login_input_errors_conform(client, baseline, body, media, status):
+    response = client.post("/auth/login", content=body, headers={"Content-Type": media})
+    assert response.status_code == status
+    validate_response(baseline, "/auth/login", response, "post")
 
 
 @pytest.mark.parametrize("path", sorted(HEALTH_PATHS))

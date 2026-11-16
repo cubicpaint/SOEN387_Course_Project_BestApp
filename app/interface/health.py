@@ -1,4 +1,4 @@
-"""The only implemented business API operations in Phase 2."""
+"""Public process liveness and database/schema readiness operations."""
 
 from typing import Literal
 

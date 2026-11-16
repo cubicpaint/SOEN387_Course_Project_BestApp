@@ -1,6 +1,6 @@
 # API behavior reference
 
-This document explains the behavior specified by [openapi.yaml](openapi.yaml). It is a design reference, not evidence that the operations are implemented or that a running service has passed these checks. The OpenAPI document defines the request and response schemas.
+This document explains the behavior specified by [openapi.yaml](openapi.yaml). Login, barber listing, availability browsing, and health checks are implemented; appointment operations remain Phase 4 design work. This reference alone is not runtime verification evidence. The README records implemented workflows and verification, and the OpenAPI document defines request and response schemas.
 
 ## Operations and callers
 
@@ -15,6 +15,8 @@ This document explains the behavior specified by [openapi.yaml](openapi.yaml). I
 | `GET /health/ready` | Public | `200` when required application and database/schema dependencies are available |
 
 Public operations ignore `Authorization`; they do not establish a caller from it. Protected operations require exactly one valid `Authorization: Bearer <token>` header. Missing, duplicate, forged, expired, or otherwise invalid bearer authorization returns `401 unauthenticated`. A valid staff identity receives `403 forbidden` on customer-only operations.
+
+Login matches the stored email exactly, including case, and does not trim or normalize either credential. Tokens use the configured issuer, audience, and lifetime (default 1800 seconds, maximum 3600). Trusted identities and staff assignments are reloaded from the database after token verification. Phase 3 checks the bearer dependency on routes registered only inside tests; no protected appointment route is deployed yet.
 
 Booking requires exactly one `Idempotency-Key` header; a missing, duplicate, or malformed key returns `422 validation_error`. Unknown or repeated query parameters are rejected. Duplicate JSON object member names are malformed input, including duplicates inside nested objects.
 

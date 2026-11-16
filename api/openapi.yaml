@@ -4,8 +4,10 @@ info:
   version: 0.1.0
   description: |
     Authored design baseline for one barbershop with multiple barbers.
-    These operations are not implemented yet. Validation of this document
-    does not establish conformance of a running service.
+    Login, barber listing, availability browsing, and health checks are
+    implemented. Appointment operations remain design-only for Phase 4.
+    The running service publishes only its implemented operation subset.
+    Validation of this document alone does not establish runtime conformance.
 
     Services are haircut (30 minutes), beard (30 minutes), and both (60 minutes).
     Availability consists of 30-minute base blocks created from explicitly
@@ -50,10 +52,10 @@ info:
     delivery, reminders, and optional appointment notes are not exposed here.
     Appointment status confirmed means the booking is stored, not that an
     email has been sent. Future scope is recorded separately in docs.
-x-status: design-baseline-not-implemented
+x-status: phase-3-partially-implemented
 servers:
   - url: http://localhost:8000
-    description: Planned local service address; no running service is supplied yet
+    description: Local service address; runtime publishes only implemented operations
 tags:
   - name: Authentication
   - name: Barbers
@@ -75,6 +77,8 @@ paths:
         email and incorrect password produce the same invalid_credentials
         response to avoid account enumeration. Demo credentials are provisioned
         outside source control; the examples below are placeholders.
+        Email matching is exact and case-sensitive; input is not trimmed or
+        normalized. Passwords are also used exactly as supplied.
 
         The server validates password hashes. Protected operations subsequently
         validate the token signature, allowed algorithm, expiration, issuer,
