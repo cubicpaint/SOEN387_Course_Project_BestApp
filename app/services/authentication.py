@@ -41,3 +41,15 @@ class AuthenticationService:
         except SQLAlchemyError:
             raise ServiceUnavailable() from None
         return LoginResult(self.tokens.issue(caller.id), self.tokens.settings.jwt_ttl_seconds, caller)
+
+    def authenticate(self, token: str) -> Caller:
+        user_id = self.tokens.verify(token)
+        try:
+            with self.session_factory() as session:
+                repository = UserRepository(session)
+                user = repository.by_id(user_id)
+                if user is None:
+                    raise Unauthenticated()
+                return repository.caller(user)
+        except SQLAlchemyError:
+            raise ServiceUnavailable() from None

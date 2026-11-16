@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.domain.identity import Caller
 from app.domain.types import Role
 from app.interface.validation import JSONRoute, validate_query
+from app.services.errors import Unauthenticated
 
 
 router = APIRouter(tags=["Authentication"], route_class=JSONRoute)
@@ -70,3 +71,13 @@ def login(request: Request, credentials: LoginRequest):
             managedBarberIds=list(result.caller.managed_barber_ids),
         ),
     )
+
+
+def current_caller(request: Request) -> Caller:
+    headers = request.headers.getlist("authorization")
+    if len(headers) != 1:
+        raise Unauthenticated()
+    parts = headers[0].split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise Unauthenticated()
+    return request.app.state.authentication.authenticate(parts[1])

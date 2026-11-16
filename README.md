@@ -230,3 +230,5 @@ For the running-container acceptance check:
 Run this separately from the integration suite. It builds/starts this Compose stack, checks live health responses and the published contract, inserts a uniquely named temporary barber, verifies it survives restarts and container recreation with the same volume, and briefly stops PostgreSQL to verify liveness/readiness and recovery. It then removes only its own temporary record and leaves the API/database running. Existing application data is retained.
 
 Phase 2 verification completed on November 15, 2026: all 118 cases passed (98 unit/contract checks and 20 real PostgreSQL integration checks), alongside the running-container restart, persistence, outage, and recovery checks. This evidence covers the foundation and health operations; later business workflows remain unimplemented.
+
+The reusable bearer dependency verifies tokens and reloads current database identity and staff assignments. Protected header handling is exercised on routes registered only in tests.

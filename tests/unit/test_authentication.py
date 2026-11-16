@@ -9,7 +9,7 @@ from app.services.errors import ServiceUnavailable
 from app.services.tokens import TokenService
 
 
-@pytest.mark.parametrize("operation", ["login"])
+@pytest.mark.parametrize("operation", ["login", "authenticate"])
 def test_authentication_data_source_failures_are_safe_service_failures(operation):
     def unavailable_session():
         raise OperationalError("private-database-sentinel", {}, RuntimeError("private-driver-sentinel"))
