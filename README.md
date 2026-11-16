@@ -81,6 +81,8 @@ docker compose run --rm migrate python -m alembic current
 
 Host Python settings read `.env`; process environment values take precedence. Compose constructs its own `DATABASE_URL` using the `db` hostname. Use matching credentials in both places. Missing/invalid required application configuration stops startup with a field-name diagnostic, without printing its value. JWT settings are validated only when the API is constructed; database migrations and demo provisioning do not require a signing secret. Email-provider settings remain later-phase work.
 
+Tokens use HS256 with an explicitly allowed algorithm and required signature, issuer, audience, subject, issued-at time, and expiration checks. The signing secret is never generated again at API startup: retain the same private configuration across restarts. Changing it invalidates existing tokens.
+
 ## Provision demonstration data
 
 After startup, run the explicit command and enter a private password of at least 12 characters:
