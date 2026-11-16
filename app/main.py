@@ -9,12 +9,14 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 
 from app.config import AuthSettings, Settings, load_auth_settings, load_settings
-from app.data.database import create_engine_from_settings
+from app.data.database import create_engine_from_settings, create_session_factory
 from app.interface.errors import error_response
 from app.interface.health import router
 from app.interface.middleware import RequestContextMiddleware
+from app.interface.validation import InputError
 from app.logging import configure_logging
 from app.services.health import ReadinessService
+from app.services.errors import BarberNotFound, Forbidden, InvalidCredentials, ServiceUnavailable, Unauthenticated
 
 
 def runtime_openapi() -> dict:
@@ -46,6 +48,25 @@ def create_app(settings: Settings | None = None, auth_settings: AuthSettings | N
     application.state.readiness = ReadinessService(engine)
     application.add_middleware(RequestContextMiddleware)
     application.include_router(router)
+
+    @application.exception_handler(InputError)
+    async def invalid_http_input(request: Request, error: InputError):
+        return error_response(error.status, error.code, error.message)
+
+    failures = {
+        InvalidCredentials: (401, "invalid_credentials", "The email or password is incorrect."),
+        Unauthenticated: (401, "unauthenticated", "Valid bearer authorization is required."),
+        Forbidden: (403, "forbidden", "You are not permitted to perform this action."),
+        BarberNotFound: (404, "barber_not_found", "The barber was not found."),
+        ServiceUnavailable: (503, "service_unavailable", "The service is temporarily unavailable."),
+    }
+
+    async def use_case_failure(request: Request, error: Exception):
+        status, code, message = failures[type(error)]
+        return error_response(status, code, message, retryable=status == 503)
+
+    for error_type in failures:
+        application.add_exception_handler(error_type, use_case_failure)
 
     @application.exception_handler(RequestValidationError)
     async def invalid_input(request: Request, error: RequestValidationError):
