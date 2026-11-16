@@ -15,6 +15,7 @@ def create_engine_from_settings(settings: Settings) -> Engine:
         timeout_options = f"{options} -c timezone=UTC -c statement_timeout={settings.db_query_timeout_ms}".strip()
         return create_engine(
             url,
+            isolation_level="READ COMMITTED",
             pool_pre_ping=True,
             pool_timeout=settings.db_pool_timeout,
             hide_parameters=True,

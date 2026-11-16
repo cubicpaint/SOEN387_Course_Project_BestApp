@@ -72,6 +72,26 @@ def test_transactions_commit_and_rollback_without_partial_data(session_factory):
         assert session.get(Barber, "bar_rollback") is None
 
 
+def test_application_connections_pin_read_committed_even_if_database_default_differs(postgres_engine):
+    from app.config import Settings
+    from app.data.database import create_engine_from_settings
+
+    with postgres_engine.connect() as connection:
+        schema = connection.scalar(text("SELECT current_schema()"))
+    url = postgres_engine.url.update_query_dict({
+        "options": f"-c search_path={schema} -c default_transaction_isolation=serializable",
+    })
+    engine = create_engine_from_settings(Settings(
+        DATABASE_URL=url.render_as_string(hide_password=False), _env_file=None,
+    ))
+    try:
+        with engine.connect() as connection:
+            assert connection.scalar(text("SHOW default_transaction_isolation")) == "serializable"
+            assert connection.scalar(text("SHOW transaction_isolation")) == "read committed"
+    finally:
+        engine.dispose()
+
+
 def test_one_slot_cannot_be_allocated_to_two_appointments(session_factory):
     with session_factory.begin() as session:
         insert_people(session)
