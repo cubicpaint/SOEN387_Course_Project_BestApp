@@ -9,7 +9,7 @@ BestApp is a barbershop appointment-booking project. Customers can log in, brows
 
 The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, authenticated booking and management, atomic block allocation, and durable mutation retries. Email notifications, reminders, and optional appointment notes remain later-phase work.
 
-Phase 5 implementation is under final verification. Rescheduling changes time only: the original barber and service remain fixed, following the user's approved refinement of the proposal. Staff availability edits reject the entire change if it would remove an occupied block. The verification record below distinguishes completed checks from those still in progress.
+Phase 5's implementation criteria are verified. Rescheduling changes time only: the original barber and service remain fixed, following the user's approved refinement of the proposal. Staff availability edits reject the entire change if it would remove an occupied block. The verification record below describes the completed checks.
 
 ## Repository contents
 
@@ -296,7 +296,7 @@ The isolated unsafe control deliberately omits the customer lock and synchronize
 Optional JavaScript state checks use an installed `node` executable through a small DOM/fetch substitute. They cover lost replies, same-key retry, pending-state restoration, account switches, stale availability/list responses, token expiry, and login while browsing. They are not full-browser automation. Without Node those cases explicitly skip, while Python asset/HTML/package checks still run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/unit/test_frontend.py -q
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_frontend.py tests/unit/test_phase5_frontend.py -q
 ```
 
 For the running-container acceptance check:
@@ -370,6 +370,12 @@ The optional mode restarts and recreates the API/database containers. Run it sep
 Unit and PostgreSQL boundary tests inject an aware UTC clock through the service constructor or application test dependency. They check 24-hour and two-hour cutoffs at the boundary and one microsecond on either side. Real lock/event tests advance that injected time while a request waits for customer, appointment, or block protection. No test waits for real hours, and the deployed API exposes no clock-control operation.
 
 The full suite includes real PostgreSQL races for same-version reschedules, cancellation/rescheduling, simultaneous identical/conflicting retries, full-duration destination competition, customer overlap across barbers, released-slot booking, staff edits, and genuine lock timeouts. Fault injection verifies rollback after allocation changes, appointment writes, and outcome persistence. Additional tests cover DST, extreme timestamps, revoked staff assignments, rerun provisioning, and browser account/retry state.
+
+Phase 5 verification on November 16, 2026 covered **712 unique passing tests: 562 unit/contract checks and 150 real PostgreSQL cases**. The full regression run passed 711 tests in 1146.90 seconds before one later frontend privacy regression was collected. The final unit/contract run passed all 562, including that new case, in 38.90 seconds; collection confirms 712. OpenAPI validation and `pip check` passed. The existing nonfailing Starlette TestClient warning remains.
+
+The final rebuilt container passed earlier login/browsing and Phase 4 acceptance, all five authenticated booking contention scenarios, and Phase 5 live acceptance. Real headless Edge exercised visible booking, the required shared-block move, cancellation, staff views, whole-edit occupied rejection, date closure/reopening, account privacy, and retries after deliberately discarding committed replies. Database checks confirmed one cancelled appointment at version 3, unchanged barber/service, the moved start, no allocations, six durable outcomes and preserved slot identities. These are actual browser checks in addition to the optional Node state tests; their local helper stays ignored under `build/`.
+
+Foundation acceptance passed retained-data/revision restart/recreation checks and actual database outage recovery. Phase 5 `--restart` passed persistence of active reschedules, cancelled history, allocations, staff revisions and all outcome bindings, including exact body/status/ETag replay after both restart and container recreation. Temporary live accounts and isolated test schemas were removed; liveness and readiness returned `200`. Phase 5 is complete; notifications and reminders remain later work.
 
 ## Five-step milestone demonstration
 

@@ -60,13 +60,14 @@ Errors use the documented `error` object with `code`, a safe `message`, and `ret
 | --- | --- | --- |
 | `400` | `invalid_json`: malformed JSON or duplicate object member names | Correct the body |
 | `401` | `invalid_credentials` at login; `unauthenticated` on protected operations | Supply correct credentials or valid bearer authorization |
-| `403` | `forbidden`: a valid caller lacks customer permission | Use an authorized account |
-| `404` | `barber_not_found` for availability; `slot_not_found` for booking | Refresh the selected resource |
-| `409` | `slot_unavailable`, `customer_overlap`, or `idempotency_key_conflict` | Resolve the conflict; do not automatically create a new booking attempt |
+| `403` | `forbidden`: a valid caller lacks the required role, ownership, or barber assignment | Use an authorized account |
+| `404` | `barber_not_found`, `slot_not_found`, or `appointment_not_found` | Refresh the selected resource |
+| `409` | `slot_unavailable`, `customer_overlap`, `idempotency_key_conflict`, `appointment_not_confirmed`, `barber_change_forbidden`, `availability_occupied`, or `availability_conflict` | Resolve the documented conflict before starting a new intent |
+| `412` | `stale_version`: the supplied appointment version or date revision is stale | Refresh the resource before starting a new intent; preserve the precondition on an uncertain retry |
 | `415` | `unsupported_media_type`: a JSON-body operation received another media type | Send `application/json` |
-| `422` | `validation_error`, or booking's `booking_notice_violation` | Correct input or choose an eligible start |
-| `500` | `internal_error`: controlled unexpected failure | Bounded retry; booking retains its key and body |
-| `503` | `service_unavailable`: temporary dependency or transaction-wait failure; also unready database/schema | Honor `Retry-After`; bounded retry with the same booking key and body |
+| `422` | `validation_error`, `booking_notice_violation`, or `change_cutoff_violation` | Correct input or choose an eligible start |
+| `500` | `internal_error`: controlled unexpected failure | Bounded retry with the unchanged mutation intent |
+| `503` | `service_unavailable`: temporary dependency or transaction-wait failure; also unready database/schema | Honor `Retry-After`; bounded retry with the unchanged mutation intent |
 
 Only `500` and `503` errors have `retryable: true`. A failed or lost HTTP response does not prove a booking transaction failed. Reuse the original key and body to discover its recorded outcome safely.
 
