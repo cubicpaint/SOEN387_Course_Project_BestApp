@@ -1,6 +1,7 @@
 """Customer/staff controls and safe retries for appointment-management intents."""
 
 import ast
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -330,5 +331,6 @@ def test_management_state_machine(scenario):
     result = subprocess.run(
         [node, "-e", browser_harness() + CHANGE_SCENARIOS, str(ROOT / "app/static/app.js"), scenario],
         capture_output=True, text=True, timeout=15, check=False,
+        env={**os.environ, "TZ": "Pacific/Honolulu"},
     )
     assert result.returncode == 0, result.stderr
