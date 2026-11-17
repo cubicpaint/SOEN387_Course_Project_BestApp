@@ -150,6 +150,8 @@ function updateControls() {
   ui["reschedule-button"].disabled = !customer() || !management || !changeSelected || blocked || mutationBusy || !ui["change-confirm"].checked;
   ui["cancel-appointment-button"].disabled = !customer() || !management || blocked || mutationBusy || !ui["change-confirm"].checked;
   ui["staff-load-button"].disabled = !staff() || mutationBusy;
+  ui["staff-barber"].disabled = blocked || mutationBusy;
+  ui["staff-date"].disabled = blocked || mutationBusy;
   ui["staff-editor"].disabled = !staff() || !staffRevision || blocked || mutationBusy;
   ui["staff-appointments-button"].disabled = !staff();
   if (pending) ui.selection.textContent = `Pending booking: ${pending.summary}`;
@@ -564,6 +566,136 @@ async function submitChange(intent = null) {
   }
 }
 
+function torontoTimestamp(value) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23", timeZoneName: "longOffset",
+  }).formatToParts(new Date(value)).filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${parts.timeZoneName.replace("GMT", "")}`;
+}
+
+function addStaffRange(startTime = "", endTime = "") {
+  const number = ++staffRangeSequence;
+  const row = document.createElement("div"); row.className = "range-row";
+  const fields = document.createElement("div"); fields.className = "fields";
+  const start = document.createElement("input"); start.id = `range-start-${number}`; start.type = "text"; start.maxLength = 40; start.value = startTime;
+  const end = document.createElement("input"); end.id = `range-end-${number}`; end.type = "text"; end.maxLength = 40; end.value = endTime;
+  const startLabel = document.createElement("label"); startLabel.htmlFor = start.id; startLabel.textContent = "Range start (Toronto with offset)"; startLabel.append(start);
+  const endLabel = document.createElement("label"); endLabel.htmlFor = end.id; endLabel.textContent = "Range end (Toronto with offset)"; endLabel.append(end);
+  const remove = document.createElement("button"); remove.type = "button"; remove.className = "secondary"; remove.textContent = "Remove range";
+  const entry = { node: row, start, end };
+  remove.addEventListener("click", () => {
+    staffRangeRows = staffRangeRows.filter(existing => existing !== entry);
+    ui["staff-ranges"].replaceChildren(...staffRangeRows.map(existing => existing.node));
+  });
+  fields.append(startLabel, endLabel); row.append(fields, remove);
+  staffRangeRows.push(entry); ui["staff-ranges"].append(row);
+  start.disabled = end.disabled = Boolean(ui["staff-close-date"].checked);
+}
+
+function invalidateStaffSelection() {
+  staffAvailabilityAttempt += 1;
+  staffAppointmentsAttempt += 1;
+  staffRevision = null;
+  staffRangeRows = [];
+  ui["staff-ranges"].replaceChildren();
+  ui["staff-configured"].replaceChildren();
+  ui["staff-appointments"].replaceChildren();
+  ui["staff-availability-status"].textContent = "Selection changed. Load this date before editing availability.";
+  ui["staff-appointments-status"].textContent = "";
+  updateControls();
+}
+
+async function loadStaffAvailability(event) {
+  if (event) event.preventDefault();
+  const barberId = ui["staff-barber"].value;
+  const date = ui["staff-date"].value;
+  if (!staff() || !barberId || !date || !user.managedBarberIds?.includes(barberId)) return;
+  const attempt = ++staffAvailabilityAttempt;
+  const epoch = authEpoch;
+  staffRevision = null;
+  ui["staff-availability-status"].textContent = "Loading the configured schedule...";
+  updateControls();
+  try {
+    const query = new URLSearchParams({ date });
+    const result = await request(`/barbers/${barberId}/availability?${query}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (attempt !== staffAvailabilityAttempt || epoch !== authEpoch) return;
+    if (result.status === 401) { signOut("Your session expired. Log in again to view staff schedules."); return; }
+    if (!result.ok) { ui["staff-availability-status"].textContent = safeMessage(result); return; }
+    if (!result.body || !Array.isArray(result.body.ranges) || !Array.isArray(result.body.blocks) ||
+        !/^[a-f0-9]{64}$/.test(result.body.revision || "") || result.etag !== `"${result.body.revision}"`) throw new Error("Invalid schedule response");
+    staffRevision = { value: result.etag, barberId, date };
+    staffRangeRows = [];
+    ui["staff-ranges"].replaceChildren();
+    ui["staff-configured"].replaceChildren();
+    ui["staff-close-date"].checked = result.body.ranges.length === 0;
+    for (const range of result.body.ranges) {
+      const item = document.createElement("li"); item.textContent = `${displayTime(range.startTime)} to ${displayTime(range.endTime)}`;
+      ui["staff-configured"].append(item);
+      addStaffRange(torontoTimestamp(range.startTime), torontoTimestamp(range.endTime));
+    }
+    if (result.body.ranges.length === 0) {
+      const item = document.createElement("li"); item.textContent = "No available ranges are configured for this date.";
+      ui["staff-configured"].append(item);
+      addStaffRange();
+    }
+    const occupied = result.body.blocks.filter(block => block.occupied).length;
+    ui["staff-availability-status"].textContent = `${occupied} occupied half-hour block(s). Review the ranges before replacing this date's schedule.`;
+  } catch {
+    if (attempt === staffAvailabilityAttempt && epoch === authEpoch) ui["staff-availability-status"].textContent = "The schedule could not be loaded. Try again.";
+  } finally {
+    if (attempt === staffAvailabilityAttempt && epoch === authEpoch) updateControls();
+  }
+}
+
+function saveStaffAvailability() {
+  if (!staff() || !staffRevision || hasPendingIntent() || mutationBusy ||
+      staffRevision.barberId !== ui["staff-barber"].value || staffRevision.date !== ui["staff-date"].value) return;
+  const ranges = ui["staff-close-date"].checked ? [] : staffRangeRows.map(entry => ({ startTime: entry.start.value, endTime: entry.end.value }));
+  const offsetTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?[+-]\d{2}:\d{2}$/;
+  if ((!ui["staff-close-date"].checked && ranges.length === 0) || ranges.some(range =>
+      !offsetTime.test(range.startTime) || !offsetTime.test(range.endTime) ||
+      Number.isNaN(Date.parse(range.startTime)) || Number.isNaN(Date.parse(range.endTime)))) {
+    ui["staff-availability-status"].textContent = "Complete each range using a Toronto timestamp with an explicit offset, or select Close this date.";
+    return;
+  }
+  const query = new URLSearchParams({ date: staffRevision.date });
+  return submitChange({
+    userId: user.id, kind: "availability", method: "PUT", path: `/barbers/${staffRevision.barberId}/availability?${query}`,
+    ifMatch: staffRevision.value, key: crypto.randomUUID(), body: { ranges },
+    summary: `Replace ${barberNames.get(staffRevision.barberId) || staffRevision.barberId}'s availability on ${staffRevision.date}.`,
+  });
+}
+
+async function loadStaffAppointments() {
+  const barberId = ui["staff-barber"].value;
+  if (!staff() || !barberId || !user.managedBarberIds?.includes(barberId)) return;
+  const attempt = ++staffAppointmentsAttempt;
+  const epoch = authEpoch;
+  ui["staff-appointments"].replaceChildren();
+  ui["staff-appointments-status"].textContent = "Loading upcoming appointments...";
+  try {
+    const result = await request(`/barbers/${barberId}/appointments`, { headers: { Authorization: `Bearer ${token}` } });
+    if (attempt !== staffAppointmentsAttempt || epoch !== authEpoch) return;
+    if (result.status === 401) { signOut("Your session expired. Log in again to view staff appointments."); return; }
+    if (!result.ok || !result.body || !Array.isArray(result.body.appointments)) {
+      ui["staff-appointments-status"].textContent = result.ok ? "Appointment data could not be read." : safeMessage(result);
+      return;
+    }
+    for (const appointment of result.body.appointments) {
+      const item = document.createElement("li");
+      const title = document.createElement("strong"); title.textContent = `${services[appointment.service]} · ${appointment.durationMinutes} minutes`;
+      const detail = document.createElement("span"); detail.textContent = `${displayTime(appointment.startTime)} to ${displayTime(appointment.endTime)}`;
+      const contact = document.createElement("span"); contact.textContent = appointment.customerEmail;
+      const reference = document.createElement("small"); reference.textContent = appointment.id;
+      item.append(title, detail, contact, reference); ui["staff-appointments"].append(item);
+    }
+    ui["staff-appointments-status"].textContent = result.body.appointments.length ? "Upcoming confirmed appointments:" : "No upcoming confirmed appointments for this barber.";
+  } catch {
+    if (attempt === staffAppointmentsAttempt && epoch === authEpoch) ui["staff-appointments-status"].textContent = "Appointments could not be loaded. Try again.";
+  }
+}
+
 async function book() {
   if (!customer() || bookingBusy || pendingChangeForUser()) return;
   let pending = pendingForUser();
@@ -634,6 +766,14 @@ ui["reschedule-button"].addEventListener("click", () => changeAppointment("resch
 ui["cancel-appointment-button"].addEventListener("click", () => changeAppointment("cancel"));
 ui["close-management-button"].addEventListener("click", closeManagement);
 ui["change-retry-button"].addEventListener("click", () => submitChange());
+ui["staff-availability-form"].addEventListener("submit", loadStaffAvailability);
+ui["staff-appointments-button"].addEventListener("click", loadStaffAppointments);
+ui["staff-add-range-button"].addEventListener("click", () => addStaffRange());
+ui["staff-save-button"].addEventListener("click", saveStaffAvailability);
+ui["staff-close-date"].addEventListener("change", () => {
+  for (const entry of staffRangeRows) entry.start.disabled = entry.end.disabled = ui["staff-close-date"].checked;
+});
+for (const control of [ui["staff-barber"], ui["staff-date"]]) control.addEventListener("change", invalidateStaffSelection);
 ui["change-date"].addEventListener("change", () => {
   changeAvailabilityAttempt += 1;
   changeSelected = null;
@@ -654,6 +794,7 @@ const today = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit",
 }).formatToParts(new Date()).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
 ui.date.value = new Date(Date.UTC(Number(today.year), Number(today.month) - 1, Number(today.day) + 1)).toISOString().slice(0, 10);
+ui["staff-date"].value = ui.date.value;
 restorePendingBookings();
 restorePendingChanges();
 updateControls();
