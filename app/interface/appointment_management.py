@@ -75,7 +75,7 @@ mutation_router = APIRouter(route_class=JSONRoute)
 cancel_router = APIRouter(route_class=BodylessRoute)
 
 
-@router.get("/appointments/{appointmentId}", operation_id="getAppointment", response_model=ManagedAppointment)
+@router.get("/appointments/{appointmentId}", operation_id="getOwnAppointment", response_model=ManagedAppointment)
 def get_appointment(request: Request, appointmentId: AppointmentId, caller: Annotated[Caller, Depends(current_customer)]):
     validate_query(request, set())
     return managed_response(request.app.state.appointments.detail(caller, appointmentId))

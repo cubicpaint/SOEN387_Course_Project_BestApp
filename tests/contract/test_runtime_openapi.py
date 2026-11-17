@@ -25,10 +25,20 @@ from app.services.health import ReadinessService
 CONTRACT = Path(__file__).resolve().parents[2] / "api" / "openapi.yaml"
 HEALTH_PATHS = {"/health/live", "/health/ready"}
 IMPLEMENTED_PATHS = HEALTH_PATHS | {"/auth/login", "/barbers", "/availability", "/appointments"}
+MANAGEMENT_PATH = "/appointments/{appointmentId}"
+REPLACEMENT_PATH = "/appointments/{appointmentId}/availability"
+STAFF_AVAILABILITY_PATH = "/barbers/{barberId}/availability"
+STAFF_APPOINTMENTS_PATH = "/barbers/{barberId}/appointments"
+IMPLEMENTED_PATHS |= {MANAGEMENT_PATH, REPLACEMENT_PATH, STAFF_AVAILABILITY_PATH, STAFF_APPOINTMENTS_PATH}
 APPOINTMENT = {
     "id": "apt_one", "barberId": "bar_one", "slotId": "slot_one", "service": "both",
     "durationMinutes": 60, "startTime": "2030-01-15T15:00:00Z", "endTime": "2030-01-15T16:00:00Z",
     "status": "confirmed", "createdAt": "2030-01-14T15:00:00.123456Z",
+}
+MANAGED_APPOINTMENT = {**APPOINTMENT, "version": 2}
+STAFF_AVAILABILITY = {
+    "barberId": "bar_one", "date": "2030-01-15", "timeZone": "America/Toronto",
+    "ranges": [], "blocks": [], "revision": "a" * 64,
 }
 
 
@@ -52,6 +62,20 @@ def client(monkeypatch):
         http.app.state.appointments = Mock()
         http.app.state.appointments.book.return_value = BookingOutcome(201, APPOINTMENT)
         http.app.state.appointments.list_own.return_value = (APPOINTMENT,)
+        http.app.state.appointments.detail.return_value = BookingOutcome(200, MANAGED_APPOINTMENT)
+        http.app.state.appointments.reschedule.return_value = BookingOutcome(200, MANAGED_APPOINTMENT)
+        http.app.state.appointments.cancel.return_value = BookingOutcome(200, {**MANAGED_APPOINTMENT, "status": "cancelled"})
+        http.app.state.appointments.replacement_availability.return_value = BookingOutcome(200, {
+            "barberId": "bar_one", "date": "2030-01-15", "timeZone": "America/Toronto",
+            "service": "both", "durationMinutes": 60, "slots": [],
+        })
+        http.app.state.staff = Mock()
+        http.app.state.staff.availability.return_value = STAFF_AVAILABILITY
+        http.app.state.staff.replace_availability.return_value = BookingOutcome(200, STAFF_AVAILABILITY)
+        http.app.state.staff.list_appointments.return_value = ({
+            key: value for key, value in {**APPOINTMENT, "customerEmail": "customer@example.test"}.items()
+            if key != "slotId"
+        },)
         http.app.state.browsing = Mock()
         http.app.state.browsing.list_barbers.return_value = (BarberSummary("bar_one", "Alex"),)
         http.app.state.browsing.list_availability.return_value = AvailabilityResult(
@@ -86,7 +110,10 @@ def validate_response(baseline, path, response, method="get"):
         value = response.headers[name]
         if header["schema"].get("type") == "integer":
             value = int(value)
-        Draft202012Validator(header["schema"], format_checker=FormatChecker()).validate(value)
+        Draft202012Validator(
+            {"allOf": [header["schema"]], "components": baseline["components"]},
+            format_checker=FormatChecker(),
+        ).validate(value)
 
 
 def test_runtime_contract_publishes_only_implemented_operations(client, baseline):
@@ -315,3 +342,118 @@ def test_unexpected_health_error_conforms_to_authored_contract(client, baseline,
 
     assert response.status_code == 500
     validate_response(baseline, "/health/ready", response)
+
+
+MANAGEMENT_OPERATIONS = [
+    (MANAGEMENT_PATH, "get"), (MANAGEMENT_PATH, "put"), (MANAGEMENT_PATH, "delete"),
+    (REPLACEMENT_PATH, "get"), (STAFF_AVAILABILITY_PATH, "get"),
+    (STAFF_AVAILABILITY_PATH, "put"), (STAFF_APPOINTMENTS_PATH, "get"),
+]
+
+
+@pytest.mark.parametrize("path,method", MANAGEMENT_OPERATIONS)
+def test_native_management_models_parameters_and_security_match_authored_contract(client, baseline, path, method):
+    native = get_openapi(title="BestApp API", version="0.1.0", routes=client.app.routes)
+    generated = native["paths"][path][method]
+    authored = baseline["paths"][path][method]
+    assert generated["operationId"] == authored["operationId"]
+    assert generated["security"] == authored["security"]
+    generated_schema = generated["responses"]["200"]["content"]["application/json"]["schema"]
+    authored_schema = authored["responses"]["200"]["content"]["application/json"]["schema"]
+    assert schema_constraints(native, generated_schema) == schema_constraints(baseline, authored_schema)
+    generated_parameters = {(parameter["in"], parameter["name"]): parameter for parameter in generated.get("parameters", [])}
+    authored_parameters = {(parameter["in"], parameter["name"]): parameter for parameter in authored.get("parameters", [])}
+    assert generated_parameters.keys() == authored_parameters.keys()
+    for name, parameter in generated_parameters.items():
+        expected = authored_parameters[name]
+        assert parameter["required"] == expected["required"]
+        assert schema_constraints(native, parameter["schema"]) == schema_constraints(baseline, expected["schema"])
+    assert schema_constraints(native, generated.get("requestBody", {})) == schema_constraints(
+        baseline, authored.get("requestBody", {}),
+    )
+
+
+def management_request(client, path, method, **options):
+    """Use a valid trusted caller and request envelope for each new route."""
+    if path.startswith("/barbers/"):
+        client.app.state.authentication.authenticate.return_value = Caller("usr_staff", Role.STAFF, ("bar_one",))
+    headers = {"Authorization": "Bearer token"}
+    if method in {"put", "delete"}:
+        headers.update({"Idempotency-Key": "one", "If-Match": '"' + "a" * 64 + '"' if path.startswith("/barbers/") else '"2"'})
+    headers.update(options.pop("headers", {}))
+    url = path.replace("{appointmentId}", "apt_one").replace("{barberId}", "bar_one")
+    if path in {REPLACEMENT_PATH, STAFF_AVAILABILITY_PATH}:
+        url += "?date=2030-01-15"
+    if method == "put" and not options:
+        options["json"] = {"ranges": []} if path == STAFF_AVAILABILITY_PATH else {"slotId": "slot_next"}
+    return client.request(method, url, headers=headers, **options)
+
+
+@pytest.mark.parametrize("path,method", MANAGEMENT_OPERATIONS)
+def test_management_success_http_responses_conform(client, baseline, path, method):
+    response = management_request(client, path, method)
+    assert response.status_code == 200
+    validate_response(baseline, path, response, method)
+    if path == MANAGEMENT_PATH:
+        assert response.headers["ETag"] == '"2"'
+    if path == STAFF_AVAILABILITY_PATH:
+        assert response.headers["ETag"] == '"' + "a" * 64 + '"'
+
+
+@pytest.mark.parametrize("path,method,component,operation", [
+    (MANAGEMENT_PATH, "get", "appointments", "detail"),
+    (MANAGEMENT_PATH, "put", "appointments", "reschedule"),
+    (MANAGEMENT_PATH, "delete", "appointments", "cancel"),
+    (REPLACEMENT_PATH, "get", "appointments", "replacement_availability"),
+    (STAFF_AVAILABILITY_PATH, "get", "staff", "availability"),
+    (STAFF_AVAILABILITY_PATH, "put", "staff", "replace_availability"),
+    (STAFF_APPOINTMENTS_PATH, "get", "staff", "list_appointments"),
+])
+@pytest.mark.parametrize("failure,status", [
+    (Forbidden(), 403), (ServiceUnavailable(), 503), (RuntimeError("private error"), 500),
+])
+def test_management_service_errors_conform(client, baseline, path, method, component, operation, failure, status):
+    getattr(getattr(client.app.state, component), operation).side_effect = failure
+    response = management_request(client, path, method)
+    assert response.status_code == status
+    validate_response(baseline, path, response, method)
+
+
+@pytest.mark.parametrize("path,method,operation,status,code", [
+    (MANAGEMENT_PATH, "get", "detail", 404, "appointment_not_found"),
+    (MANAGEMENT_PATH, "put", "reschedule", 404, "slot_not_found"),
+    (MANAGEMENT_PATH, "put", "reschedule", 409, "barber_change_forbidden"),
+    (MANAGEMENT_PATH, "put", "reschedule", 409, "slot_unavailable"),
+    (MANAGEMENT_PATH, "put", "reschedule", 409, "customer_overlap"),
+    (MANAGEMENT_PATH, "put", "reschedule", 412, "stale_version"),
+    (MANAGEMENT_PATH, "put", "reschedule", 422, "change_cutoff_violation"),
+    (MANAGEMENT_PATH, "put", "reschedule", 422, "booking_notice_violation"),
+    (MANAGEMENT_PATH, "delete", "cancel", 409, "appointment_not_confirmed"),
+    (MANAGEMENT_PATH, "delete", "cancel", 412, "stale_version"),
+    (MANAGEMENT_PATH, "delete", "cancel", 422, "change_cutoff_violation"),
+    (REPLACEMENT_PATH, "get", "replacement_availability", 409, "appointment_not_confirmed"),
+    (REPLACEMENT_PATH, "get", "replacement_availability", 422, "change_cutoff_violation"),
+    (STAFF_AVAILABILITY_PATH, "put", "replace_availability", 409, "availability_occupied"),
+    (STAFF_AVAILABILITY_PATH, "put", "replace_availability", 409, "availability_conflict"),
+    (STAFF_AVAILABILITY_PATH, "put", "replace_availability", 409, "idempotency_key_conflict"),
+    (STAFF_AVAILABILITY_PATH, "put", "replace_availability", 412, "stale_version"),
+])
+def test_management_business_rejection_responses_conform(client, baseline, path, method, operation, status, code):
+    component = client.app.state.staff if path.startswith("/barbers/") else client.app.state.appointments
+    getattr(component, operation).return_value = BookingOutcome(status, {
+        "error": {"code": code, "message": "A safe business rejection.", "retryable": False},
+    })
+    response = management_request(client, path, method)
+    assert response.status_code == status
+    validate_response(baseline, path, response, method)
+    assert "ETag" not in response.headers
+
+
+@pytest.mark.parametrize("path", [MANAGEMENT_PATH, STAFF_AVAILABILITY_PATH])
+@pytest.mark.parametrize("content,media,status", [
+    ("{", "application/json", 400), ("{}", "text/plain", 415), ("{}", "application/json", 422),
+])
+def test_management_json_errors_conform(client, baseline, path, content, media, status):
+    response = management_request(client, path, "put", content=content, headers={"Content-Type": media})
+    assert response.status_code == status
+    validate_response(baseline, path, response, "put")
