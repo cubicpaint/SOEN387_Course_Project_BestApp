@@ -850,6 +850,241 @@ components:
             properties:
               durationMinutes:
                 const: 60
+    VersionMatch:
+      type: string
+      pattern: ^"[1-9][0-9]*"$
+      description: Strong quoted appointment version returned by the management read; wildcard and weak
+        entity tags are not accepted.
+      examples:
+      - '"1"'
+    Revision:
+      type: string
+      pattern: ^[0-9a-f]{64}$
+      examples:
+      - aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    RevisionMatch:
+      type: string
+      pattern: ^"[0-9a-f]{64}"$
+      description: Strong quoted revision returned by the staff date read.
+      examples:
+      - '"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+    ManagedAppointment:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - barberId
+      - slotId
+      - service
+      - durationMinutes
+      - startTime
+      - endTime
+      - status
+      - createdAt
+      - version
+      properties:
+        id:
+          $ref: '#/components/schemas/AppointmentId'
+        barberId:
+          $ref: '#/components/schemas/BarberId'
+        slotId:
+          $ref: '#/components/schemas/SlotId'
+        service:
+          $ref: '#/components/schemas/ServiceChoice'
+        durationMinutes:
+          $ref: '#/components/schemas/DurationMinutes'
+        startTime:
+          $ref: '#/components/schemas/UTCDateTime'
+        endTime:
+          $ref: '#/components/schemas/UTCDateTime'
+        status:
+          type: string
+          enum:
+          - confirmed
+          - cancelled
+        createdAt:
+          $ref: '#/components/schemas/UTCDateTime'
+          description: Persisted creation timestamp; does not define the eligibility decision clock
+        version:
+          type: integer
+          minimum: 1
+      allOf:
+      - if:
+          properties:
+            service:
+              enum:
+              - haircut
+              - beard
+        then:
+          properties:
+            durationMinutes:
+              const: 30
+        else:
+          properties:
+            durationMinutes:
+              const: 60
+    RescheduleRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - slotId
+      properties:
+        slotId:
+          $ref: '#/components/schemas/SlotId'
+      description: Time-only replacement. Barber and service remain the same; all other request fields are
+        rejected.
+      examples:
+      - slotId: slot_206
+    AvailabilityRange:
+      type: object
+      additionalProperties: false
+      required:
+      - startTime
+      - endTime
+      properties:
+        startTime:
+          type: string
+          format: date-time
+          pattern: '[+-]\d{2}:\d{2}$'
+          description: Explicit offset must match America/Toronto at this instant; boundaries align to :00
+            or :30.
+        endTime:
+          type: string
+          format: date-time
+          pattern: '[+-]\d{2}:\d{2}$'
+          description: Explicit offset must match America/Toronto at this instant; boundaries align to :00
+            or :30.
+      examples:
+      - startTime: '2026-11-19T09:00:00-05:00'
+        endTime: '2026-11-19T17:00:00-05:00'
+    AvailabilityChangeRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - ranges
+      properties:
+        ranges:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailabilityRange'
+          maxItems: 50
+          description: Complete desired ranges for the target Toronto date; empty closes that date. Positive,
+            nonoverlapping ranges; the final endpoint may be next local midnight.
+      examples:
+      - ranges: []
+      - ranges:
+        - startTime: '2026-11-19T09:00:00-05:00'
+          endTime: '2026-11-19T17:00:00-05:00'
+    StaffAvailabilityBlock:
+      type: object
+      additionalProperties: false
+      required:
+      - slotId
+      - startTime
+      - endTime
+      - enabled
+      - occupied
+      properties:
+        slotId:
+          $ref: '#/components/schemas/SlotId'
+        startTime:
+          $ref: '#/components/schemas/UTCDateTime'
+        endTime:
+          $ref: '#/components/schemas/UTCDateTime'
+        enabled:
+          type: boolean
+        occupied:
+          type: boolean
+    StaffAvailability:
+      type: object
+      additionalProperties: false
+      required:
+      - barberId
+      - date
+      - timeZone
+      - ranges
+      - blocks
+      - revision
+      properties:
+        barberId:
+          $ref: '#/components/schemas/BarberId'
+        date:
+          $ref: '#/components/schemas/LocalDate'
+        timeZone:
+          type: string
+          const: America/Toronto
+        ranges:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailabilityRange'
+        blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/StaffAvailabilityBlock'
+        revision:
+          $ref: '#/components/schemas/Revision'
+    StaffAppointment:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - barberId
+      - service
+      - durationMinutes
+      - startTime
+      - endTime
+      - status
+      - createdAt
+      - customerEmail
+      properties:
+        id:
+          $ref: '#/components/schemas/AppointmentId'
+        barberId:
+          $ref: '#/components/schemas/BarberId'
+        service:
+          $ref: '#/components/schemas/ServiceChoice'
+        durationMinutes:
+          $ref: '#/components/schemas/DurationMinutes'
+        startTime:
+          $ref: '#/components/schemas/UTCDateTime'
+        endTime:
+          $ref: '#/components/schemas/UTCDateTime'
+        status:
+          type: string
+          const: confirmed
+          description: Persisted booking; does not indicate an email was sent
+        createdAt:
+          $ref: '#/components/schemas/UTCDateTime'
+          description: Persisted creation timestamp; does not define the eligibility decision clock
+        customerEmail:
+          type: string
+          format: email
+          maxLength: 254
+      allOf:
+      - if:
+          properties:
+            service:
+              enum:
+              - haircut
+              - beard
+        then:
+          properties:
+            durationMinutes:
+              const: 30
+        else:
+          properties:
+            durationMinutes:
+              const: 60
+    StaffAppointmentListResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - appointments
+      properties:
+        appointments:
+          type: array
+          items:
+            $ref: '#/components/schemas/StaffAppointment'
     AppointmentListResponse:
       type: object
       additionalProperties: false
@@ -900,6 +1135,13 @@ components:
                 - unsupported_media_type
                 - validation_error
                 - booking_notice_violation
+                - appointment_not_found
+                - appointment_not_confirmed
+                - barber_change_forbidden
+                - availability_occupied
+                - availability_conflict
+                - stale_version
+                - change_cutoff_violation
                 - internal_error
                 - service_unavailable
             message:
@@ -1229,3 +1471,161 @@ components:
               code: service_unavailable
               message: The service is temporarily unavailable.
               retryable: true
+
+    AppointmentNotFound:
+      description: The appointment was not found
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Error'
+            - properties:
+                error:
+                  properties:
+                    code:
+                      const: appointment_not_found
+                    retryable:
+                      const: false
+          example:
+            error:
+              code: appointment_not_found
+              message: The appointment was not found.
+              retryable: false
+    ManagementNotFound:
+      description: The appointment or destination slot was not found
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Error'
+            - properties:
+                error:
+                  properties:
+                    code:
+                      enum:
+                      - appointment_not_found
+                      - slot_not_found
+                    retryable:
+                      const: false
+          example:
+            error:
+              code: appointment_not_found
+              message: The appointment or destination slot was not found.
+              retryable: false
+    ManagementConflict:
+      description: The appointment state, replacement, or idempotency binding conflicts with the request
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Error'
+            - properties:
+                error:
+                  properties:
+                    code:
+                      enum:
+                      - appointment_not_confirmed
+                      - barber_change_forbidden
+                      - slot_unavailable
+                      - customer_overlap
+                      - idempotency_key_conflict
+                    retryable:
+                      const: false
+          example:
+            error:
+              code: appointment_not_confirmed
+              message: The appointment state, replacement, or idempotency binding conflicts with the request.
+              retryable: false
+    AvailabilityConflict:
+      description: The availability edit conflicts with an occupied block or concurrent change
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Error'
+            - properties:
+                error:
+                  properties:
+                    code:
+                      enum:
+                      - availability_occupied
+                      - availability_conflict
+                      - idempotency_key_conflict
+                    retryable:
+                      const: false
+          example:
+            error:
+              code: availability_occupied
+              message: The availability edit conflicts with an occupied block or concurrent change.
+              retryable: false
+    StaleVersion:
+      description: The supplied version or revision is stale; refresh before starting a new intent
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Error'
+            - properties:
+                error:
+                  properties:
+                    code:
+                      const: stale_version
+                    retryable:
+                      const: false
+          example:
+            error:
+              code: stale_version
+              message: The supplied version or revision is stale.
+              retryable: false
+    ChangeUnprocessable:
+      description: The change violates its cutoff or replacement notice, or the request is invalid
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Error'
+            - properties:
+                error:
+                  properties:
+                    code:
+                      enum:
+                      - validation_error
+                      - change_cutoff_violation
+                      - booking_notice_violation
+                    retryable:
+                      const: false
+          example:
+            error:
+              code: validation_error
+              message: The change violates its cutoff or replacement notice, or the request is invalid.
+              retryable: false
