@@ -1,6 +1,6 @@
 # API behavior reference
 
-This document explains the implemented milestone behavior and approved Phase 5 management contract specified by [openapi.yaml](openapi.yaml). The README records actual implementation and verification status; this reference alone is not runtime verification evidence. The OpenAPI document defines request and response schemas.
+This document explains the implemented booking and Phase 5 management behavior specified by [openapi.yaml](openapi.yaml). The README records verification evidence; this reference alone is not runtime verification evidence. The OpenAPI document defines request and response schemas.
 
 ## Operations and callers
 

@@ -37,8 +37,8 @@ def runtime_openapi() -> dict:
                    "/appointments/{appointmentId}", "/appointments/{appointmentId}/availability",
                    "/barbers/{barberId}/appointments", "/barbers/{barberId}/availability")
     document["paths"] = {path: document["paths"][path] for path in implemented}
-    document["info"]["description"] = "Implemented booking and management operations; Phase 5 verification is in progress."
-    document["x-status"] = "phase-5-verification-in-progress"
+    document["info"]["description"] = "Implemented health, authentication, booking, time-only appointment changes, and assigned-barber staff management."
+    document["x-status"] = "phase-5-implemented"
     document["servers"] = [{"url": "/", "description": "Current service"}]
     document["tags"] = [{"name": tag} for tag in ("Health", "Authentication", "Barbers", "Availability", "Appointments", "Staff")]
     return document
