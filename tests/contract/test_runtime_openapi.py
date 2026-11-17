@@ -457,3 +457,84 @@ def test_management_json_errors_conform(client, baseline, path, content, media, 
     response = management_request(client, path, "put", content=content, headers={"Content-Type": media})
     assert response.status_code == status
     validate_response(baseline, path, response, "put")
+
+
+def raw_management_request(client, path, method, *, omit=None, duplicate=None, extra_query="", content=None):
+    """Keep duplicate header lines intact for strict HTTP boundary checks."""
+    if path.startswith("/barbers/"):
+        client.app.state.authentication.authenticate.return_value = Caller("usr_staff", Role.STAFF, ("bar_one",))
+    headers = [("Authorization", "Bearer token")]
+    if method in {"put", "delete"}:
+        match = '"' + "a" * 64 + '"' if path.startswith("/barbers/") else '"2"'
+        headers.extend([("Idempotency-Key", "one"), ("If-Match", match)])
+    headers = [(name, value) for name, value in headers if name != omit]
+    if duplicate:
+        headers.extend([(name, value) for name, value in headers if name == duplicate])
+    url = path.replace("{appointmentId}", "apt_one").replace("{barberId}", "bar_one")
+    if path in {REPLACEMENT_PATH, STAFF_AVAILABILITY_PATH}:
+        url += "?date=2030-01-15"
+    if extra_query:
+        url += ("&" if "?" in url else "?") + extra_query
+    options = {}
+    if content is not None:
+        options["content"] = content
+    elif method == "put":
+        options["json"] = {"ranges": []} if path == STAFF_AVAILABILITY_PATH else {"slotId": "slot_next"}
+    return client.request(method, url, headers=headers, **options)
+
+
+@pytest.mark.parametrize("path,method", MANAGEMENT_OPERATIONS)
+@pytest.mark.parametrize("mode", ["missing", "duplicate"])
+def test_management_rejects_missing_and_duplicate_bearer_headers(client, baseline, path, method, mode):
+    options = {"omit": "Authorization"} if mode == "missing" else {"duplicate": "Authorization"}
+    response = raw_management_request(client, path, method, **options)
+    assert response.status_code == 401
+    validate_response(baseline, path, response, method)
+
+
+MUTATIONS = [(MANAGEMENT_PATH, "put"), (MANAGEMENT_PATH, "delete"), (STAFF_AVAILABILITY_PATH, "put")]
+
+
+@pytest.mark.parametrize("path,method", MUTATIONS)
+@pytest.mark.parametrize("header,mode", [
+    ("If-Match", "missing"), ("If-Match", "duplicate"),
+    ("Idempotency-Key", "missing"), ("Idempotency-Key", "duplicate"),
+])
+def test_management_requires_exactly_one_key_and_precondition(client, baseline, path, method, header, mode):
+    options = {"omit": header} if mode == "missing" else {"duplicate": header}
+    response = raw_management_request(client, path, method, **options)
+    assert response.status_code == 422
+    validate_response(baseline, path, response, method)
+
+
+@pytest.mark.parametrize("path,method", MUTATIONS)
+@pytest.mark.parametrize("match", ["*", 'W/"2"', "2", '"2", "3"'])
+def test_management_rejects_weak_wildcard_and_multiple_preconditions(client, baseline, path, method, match):
+    response = management_request(client, path, method, headers={"If-Match": match})
+    assert response.status_code == 422
+    validate_response(baseline, path, response, method)
+
+
+@pytest.mark.parametrize("path,method", MANAGEMENT_OPERATIONS)
+def test_management_rejects_unknown_query_parameters(client, baseline, path, method):
+    response = raw_management_request(client, path, method, extra_query="customerId=usr_other")
+    assert response.status_code == 422
+    validate_response(baseline, path, response, method)
+
+
+def test_cancellation_rejects_a_body(client, baseline):
+    response = raw_management_request(client, MANAGEMENT_PATH, "delete", content='{"service":"beard"}')
+    assert response.status_code == 422
+    validate_response(baseline, MANAGEMENT_PATH, response, "delete")
+
+
+@pytest.mark.parametrize("path,method", MUTATIONS)
+def test_management_snapshot_replay_keeps_bytes_and_etag_with_new_correlation(client, baseline, path, method):
+    first = management_request(client, path, method)
+    second = management_request(client, path, method)
+    assert first.status_code == second.status_code == 200
+    assert first.content == second.content
+    assert first.headers["ETag"] == second.headers["ETag"]
+    assert first.headers["X-Correlation-ID"] != second.headers["X-Correlation-ID"]
+    validate_response(baseline, path, first, method)
+    validate_response(baseline, path, second, method)
