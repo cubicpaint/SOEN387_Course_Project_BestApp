@@ -6,14 +6,16 @@ info:
     Authored design baseline for one barbershop with multiple barbers.
     Login, barber listing, availability browsing, atomic booking, own upcoming
     appointment listing, and health checks are implemented.
-    The running service publishes all seven milestone operations.
+    Phase 5 adds time-only customer changes and assigned-barber staff management.
+    New operations are designed here before their runtime publication.
     Validation of this document alone does not establish runtime conformance.
 
     Services are haircut (30 minutes), beard (30 minutes), and both (60 minutes).
     Availability consists of 30-minute base blocks created from explicitly
     dated America/Toronto ranges on the :00/:30 grid. A combined appointment
     needs two consecutive available blocks for the same barber. All API
-    timestamps are UTC instants ending in Z; date queries mean local dates
+    response appointment/block timestamps are UTC instants ending in Z; staff
+    range boundaries carry explicit Toronto offsets. Date queries mean local dates
     in America/Toronto, including daylight-saving transitions.
 
     A new appointment must start at least two elapsed hours after the trusted
@@ -25,8 +27,8 @@ info:
     The agreed customer change cutoff is 24 hours before the existing start,
     inclusive. A booking made less than 24 hours ahead therefore cannot later
     be cancelled or rescheduled online by the customer. Clients must explain
-    this restriction before such a booking is confirmed. Change operations
-    are not exposed by this contract.
+    this restriction before such a booking or replacement is confirmed.
+    Rescheduling changes time only; service and barber remain unchanged.
 
     Every response has a fresh server-generated X-Correlation-ID for logs
     and Cache-Control: no-store. Errors contain a stable code, safe message,
@@ -48,11 +50,11 @@ info:
     a customer's appointments. After authorization, if several business rules
     fail, any applicable documented business rejection may be returned.
 
-    Registration, cancellation, rescheduling, staff management, email
-    delivery, reminders, and optional appointment notes are not exposed here.
+    Registration, email delivery, reminders, and optional appointment notes
+    are not exposed here.
     Appointment status confirmed means the booking is stored, not that an
     email has been sent. Future scope is recorded separately in docs.
-x-status: phase-4-implemented
+x-status: phase-5-designed
 servers:
   - url: http://localhost:8000
     description: Local service address; runtime publishes only implemented operations
@@ -562,6 +564,314 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+
+  /appointments/{appointmentId}:
+    get:
+      operationId: getOwnAppointment
+      tags:
+      - Appointments
+      summary: Read current management details for an owned appointment
+      security:
+      - bearerAuth: []
+      description: Customer role and ownership are enforced in the service layer. Unknown or repeated
+        query parameters are rejected. Return the persisted schedule, status, and version, even after
+        cancellation. This is the source for a new mutation's If-Match; the original booking and list
+        representations remain unchanged.
+      parameters:
+      - name: appointmentId
+        in: path
+        required: true
+        description: Appointment owned by the authenticated customer.
+        schema:
+          $ref: '#/components/schemas/AppointmentId'
+      responses:
+        '200':
+          description: Current owned appointment, including cancelled history
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            ETag:
+              required: true
+              description: Version of this immutable response snapshot; use it as If-Match for a new intent.
+              schema:
+                $ref: '#/components/schemas/VersionMatch'
+              example: '"2"'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedAppointment'
+              example:
+                id: apt_301
+                barberId: bar_101
+                slotId: slot_206
+                service: both
+                durationMinutes: 60
+                startTime: '2030-01-15T15:30:00Z'
+                endTime: '2030-01-15T16:30:00Z'
+                status: confirmed
+                createdAt: '2030-01-10T18:00:00Z'
+                version: 2
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '404':
+          $ref: '#/components/responses/AppointmentNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    put:
+      operationId: rescheduleAppointment
+      tags:
+      - Appointments
+      summary: Change only the time of an owned appointment
+      security:
+      - bearerAuth: []
+      description: 'Customer role and ownership are enforced in the service layer. Unknown or repeated
+        query parameters are rejected. Keep the original barber, service, ID, and createdAt. A destination
+        slot for another barber returns barber_change_forbidden; service and barber request fields are
+        invalid. The current appointment must start at least 24 elapsed hours after one trusted decision
+        time sampled after concurrency waits. The destination requires at least two elapsed hours, enabled
+        complete-duration blocks, and no customer overlap excluding this appointment. Both boundaries
+        are inclusive. Protect the union of original and destination blocks in deterministic order: retain
+        shared blocks, acquire additions, release obsolete blocks, and increment appointment version atomically.
+        Any failed reschedule preserves the original appointment, allocations, and versions. A 60-minute
+        10:00 start can move to 10:30 by retaining the 10:30 block. Explain the online-change restriction
+        before confirming a replacement less than 24 hours away. Require one Idempotency-Key and one If-Match.
+        Authenticate and authorize before replay. Matching completed keys replay their original status,
+        JSON body, and snapshot ETag before checking current version, state, cutoff, or availability.
+        Fingerprints bind operation, path, precondition, and normalized content. Successful changes and
+        completed business rejections commit with their recorded outcomes; transient failures do not consume
+        an unfinished key.'
+      parameters:
+      - name: appointmentId
+        in: path
+        required: true
+        description: Appointment owned by the authenticated customer.
+        schema:
+          $ref: '#/components/schemas/AppointmentId'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Exactly one caller-scoped key; retries keep key, target, precondition, and body unchanged.
+        schema:
+          $ref: '#/components/schemas/IdempotencyKey'
+      - name: If-Match
+        in: header
+        required: true
+        description: Exactly one strong quoted current version. Missing, repeated, malformed, weak, and
+          wildcard values return 422.
+        schema:
+          $ref: '#/components/schemas/VersionMatch'
+      responses:
+        '200':
+          description: Rescheduled appointment or identical recorded result
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            ETag:
+              required: true
+              description: Version of this immutable response snapshot; use it as If-Match for a new intent.
+              schema:
+                $ref: '#/components/schemas/VersionMatch'
+              example: '"2"'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedAppointment'
+              example:
+                id: apt_301
+                barberId: bar_101
+                slotId: slot_206
+                service: both
+                durationMinutes: 60
+                startTime: '2030-01-15T15:30:00Z'
+                endTime: '2030-01-15T16:30:00Z'
+                status: confirmed
+                createdAt: '2030-01-10T18:00:00Z'
+                version: 2
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '400':
+          $ref: '#/components/responses/InvalidJson'
+        '404':
+          $ref: '#/components/responses/ManagementNotFound'
+        '409':
+          $ref: '#/components/responses/ManagementConflict'
+        '412':
+          $ref: '#/components/responses/StaleVersion'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ChangeUnprocessable'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RescheduleRequest'
+            example:
+              slotId: slot_206
+    delete:
+      operationId: cancelAppointment
+      tags:
+      - Appointments
+      summary: Cancel an owned appointment and retain its history
+      security:
+      - bearerAuth: []
+      description: Customer role and ownership are enforced in the service layer. Unknown or repeated
+        query parameters are rejected. No request body is accepted. Require the existing start to be at
+        least 24 elapsed hours after the single trusted decision time sampled after concurrency waits.
+        Exactly 24 hours is eligible. Atomically mark cancelled, increment appointment version, and release
+        every allocation once; keep historical scheduling fields and permanent slot identities. Require
+        one Idempotency-Key and one If-Match. Authenticate and authorize before replay. Matching completed
+        keys replay their original status, JSON body, and snapshot ETag before checking current version,
+        state, cutoff, or availability. Fingerprints bind operation, path, precondition, and normalized
+        content. Successful changes and completed business rejections commit with their recorded outcomes;
+        transient failures do not consume an unfinished key.
+      parameters:
+      - name: appointmentId
+        in: path
+        required: true
+        description: Appointment owned by the authenticated customer.
+        schema:
+          $ref: '#/components/schemas/AppointmentId'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Exactly one caller-scoped key; retries keep key, target, precondition, and body unchanged.
+        schema:
+          $ref: '#/components/schemas/IdempotencyKey'
+      - name: If-Match
+        in: header
+        required: true
+        description: Exactly one strong quoted current version. Missing, repeated, malformed, weak, and
+          wildcard values return 422.
+        schema:
+          $ref: '#/components/schemas/VersionMatch'
+      responses:
+        '200':
+          description: Cancelled history with all active allocations released; identical replay preserves
+            this result
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            ETag:
+              required: true
+              description: Version of this immutable response snapshot; use it as If-Match for a new intent.
+              schema:
+                $ref: '#/components/schemas/VersionMatch'
+              example: '"3"'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedAppointment'
+              example:
+                id: apt_301
+                barberId: bar_101
+                slotId: slot_206
+                service: both
+                durationMinutes: 60
+                startTime: '2030-01-15T15:30:00Z'
+                endTime: '2030-01-15T16:30:00Z'
+                status: cancelled
+                createdAt: '2030-01-10T18:00:00Z'
+                version: 3
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '404':
+          $ref: '#/components/responses/AppointmentNotFound'
+        '409':
+          $ref: '#/components/responses/CancellationConflict'
+        '412':
+          $ref: '#/components/responses/StaleVersion'
+        '422':
+          $ref: '#/components/responses/CancellationUnprocessable'
+  /appointments/{appointmentId}/availability:
+    get:
+      operationId: listReplacementAvailability
+      tags:
+      - Appointments
+      summary: Browse time-only replacements, including reusable own blocks
+      security:
+      - bearerAuth: []
+      description: Customer role and ownership are enforced in the service layer. Unknown or repeated
+        query parameters are rejected. Use the appointment's original barber and service; no barberId
+        or service query is accepted. Treat only this appointment's own allocations as reusable so a 60-minute
+        appointment can move forward by 30 minutes. Other bookings remain unavailable. Return observations,
+        not holds; rescheduling rechecks all eligibility in its transaction. The appointment must be confirmed
+        and outside its 24-hour change cutoff. Apply the two-hour replacement notice, complete duration,
+        and customer overlap excluding this appointment.
+      parameters:
+      - name: appointmentId
+        in: path
+        required: true
+        description: Appointment owned by the authenticated customer.
+        schema:
+          $ref: '#/components/schemas/AppointmentId'
+      - name: date
+        in: query
+        required: true
+        description: Toronto local date for replacement starts.
+        schema:
+          $ref: '#/components/schemas/LocalDate'
+      responses:
+        '200':
+          description: Eligible replacement starts, including an empty slots array
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailabilityResponse'
+              example:
+                barberId: bar_101
+                date: '2030-01-15'
+                timeZone: America/Toronto
+                service: both
+                durationMinutes: 60
+                slots:
+                - slotId: slot_206
+                  startTime: '2030-01-15T15:30:00Z'
+                  endTime: '2030-01-15T16:30:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '404':
+          $ref: '#/components/responses/AppointmentNotFound'
+        '409':
+          $ref: '#/components/responses/AppointmentStateConflict'
+        '422':
+          $ref: '#/components/responses/CancellationUnprocessable'
 
 components:
   securitySchemes:
@@ -1628,4 +1938,81 @@ components:
             error:
               code: validation_error
               message: The change violates its cutoff or replacement notice, or the request is invalid.
+              retryable: false
+
+    AppointmentStateConflict:
+      description: The appointment is no longer confirmed
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Error'
+            - properties:
+                error:
+                  properties:
+                    code:
+                      const: appointment_not_confirmed
+                    retryable:
+                      const: false
+          example:
+            error:
+              code: appointment_not_confirmed
+              message: The appointment is no longer confirmed.
+              retryable: false
+    CancellationConflict:
+      description: The appointment is no longer confirmed or the key is bound to another intent
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Error'
+            - properties:
+                error:
+                  properties:
+                    code:
+                      enum:
+                      - appointment_not_confirmed
+                      - idempotency_key_conflict
+                    retryable:
+                      const: false
+          example:
+            error:
+              code: appointment_not_confirmed
+              message: The appointment is no longer confirmed or the key is bound to another intent.
+              retryable: false
+    CancellationUnprocessable:
+      description: The request is invalid or the appointment is less than 24 hours away
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Error'
+            - properties:
+                error:
+                  properties:
+                    code:
+                      enum:
+                      - validation_error
+                      - change_cutoff_violation
+                    retryable:
+                      const: false
+          example:
+            error:
+              code: validation_error
+              message: The request is invalid or the appointment is less than 24 hours away.
               retryable: false
