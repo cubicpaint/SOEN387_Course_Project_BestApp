@@ -9,6 +9,8 @@ BestApp is a barbershop appointment-booking project. Customers can log in, brows
 
 The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, authenticated booking, atomic block allocation, and durable booking retries. Phase 4's booking and milestone-interface criteria are verified. Cancellation, rescheduling, staff management, email notifications, and reminders remain later-phase work.
 
+Phase 5 implementation is approved and in progress. Rescheduling will change time only: the original barber and service remain fixed. Staff availability edits will reject the entire change if it would remove an occupied block. Appointment changes, staff routes, and their interface will be documented as implemented after verification; emails and reminders remain later phases.
+
 ## Repository contents
 
 | File | Purpose |
