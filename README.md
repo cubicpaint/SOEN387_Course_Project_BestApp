@@ -208,6 +208,8 @@ Booking uses the existing schema in one explicitly `READ COMMITTED` transaction.
 
 The booking decision runs inside a savepoint. If either block claim, notice, or customer-overlap check fails, that savepoint rolls back every claim and version change before the outer transaction stores the business rejection. For success, the appointment, all allocations, and the completed idempotency response commit together. A transient or unexpected failure rolls back the unfinished transaction rather than recording a transient outcome; retrying the original key discovers any outcome that committed before its reply was lost. The trusted decision clock is sampled once after customer and block waits. Outbox data and optional notes remain reserved for later genuine migrations; only `0001_core` is currently required.
 
+Appointment changes take the same customer lock, protect the owned appointment/version, and update the union of source/destination blocks in barber/start/ID order. Shared allocations stay attached to the appointment; only new/obsolete allocations are added/released. Cancellation uses the same protection and retains the cancelled row. Staff writes lock their caller and barber before editing blocks; the barber's `FOR NO KEY UPDATE` lock serializes schedule writers while allowing booking's foreign-key checks to proceed. Block version checks prevent an edit from disabling a concurrent booking. No network calls occur inside these transactions.
+
 ## Health, errors, and logs
 
 | Operation | Behavior |
@@ -345,6 +347,29 @@ The rebuilt container passed the default Phase 4 live acceptance command and all
 Phase 4 verification on November 16, 2026 covered **444 unique passing tests: 363 unit/contract checks and 81 real PostgreSQL cases**. The full regression run passed 443 tests in 598.17 seconds before the additional isolation regression was collected; that new PostgreSQL case then passed alongside three already-counted database-settings checks, and collection confirms 444 cases. OpenAPI validation and `pip check` passed. After a stricter raw-response comparison exposed JSONB object-key reordering, deterministic booking serialization fixed the reproduced real HTTP/database failure; all 83 affected HTTP, native-contract, and real-database checks passed after the correction. The existing Starlette TestClient deprecation warning remains nonfailing.
 
 The foundation acceptance command passed retained-data/revision checks across restart and container recreation, then an actual database outage with liveness `200`, readiness `503`, and recovery. Phase 4 acceptance with `--restart` also passed appointment, full-allocation, and immutable-outcome persistence across both restart and recreation. The final image was rebuilt after the serialization correction and passed Phase 4 restart/recreation acceptance again; a live raw-body check confirmed byte-identical creation/replay responses with fresh correlation IDs and one complete appointment. Earlier login/browsing acceptance also passed. Temporary verification records and isolated test schemas were removed, and the API/database were left healthy. Phase 4 is complete; the milestone demonstration is prepared. This does not claim the presentation has occurred.
+
+## Verify Phase 5
+
+Run the current container, then the live management acceptance check:
+
+```powershell
+docker compose up -d --build api
+.\.venv\Scripts\python.exe -m scripts.verify_phase5_runtime
+```
+
+It authenticates temporary customers and assigned staff, validates all 14 operations against OpenAPI, and verifies time-only rescheduling, a retained shared block, failed-move rollback, production cutoff rejection, cancellation history/release, staff scope, occupied-edit rejection, date closure/reopening, and byte-identical historical replays with the original ETags. Fixtures are several days ahead for successful changes, with separate short-notice records for the production cutoff. Only its temporary records are removed; demonstration data is retained.
+
+For retained-volume persistence of an active reschedule, cancelled history, allocations, staff revisions, and every recorded binding:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.verify_phase5_runtime --restart
+```
+
+The optional mode restarts and recreates the API/database containers. Run it separately from integration tests, browser checks, and other demonstrations. It does not change the server clock.
+
+Unit and PostgreSQL boundary tests inject an aware UTC clock through the service constructor or application test dependency. They check 24-hour and two-hour cutoffs at the boundary and one microsecond on either side. Real lock/event tests advance that injected time while a request waits for customer, appointment, or block protection. No test waits for real hours, and the deployed API exposes no clock-control operation.
+
+The full suite includes real PostgreSQL races for same-version reschedules, cancellation/rescheduling, simultaneous identical/conflicting retries, full-duration destination competition, customer overlap across barbers, released-slot booking, staff edits, and genuine lock timeouts. Fault injection verifies rollback after allocation changes, appointment writes, and outcome persistence. Additional tests cover DST, extreme timestamps, revoked staff assignments, rerun provisioning, and browser account/retry state.
 
 ## Five-step milestone demonstration
 
