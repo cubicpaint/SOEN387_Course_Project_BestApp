@@ -496,7 +496,7 @@ async function loadReplacementTimes(event) {
     for (const slot of choices) {
       const label = document.createElement("label"); label.className = "slot";
       const radio = document.createElement("input"); radio.type = "radio"; radio.name = "replacement-slot"; radio.value = slot.slotId;
-      const text = document.createElement("span"); text.textContent = `${displayTime(slot.startTime)} to ${displayTime(slot.endTime)}`;
+      const text = document.createElement("span"); text.textContent = displayRange(slot.startTime, slot.endTime);
       radio.addEventListener("change", () => {
         if (hasPendingIntent() || management !== appointment) return;
         changeSelected = { slotId: slot.slotId, summary: summary(slot, appointment.service, barberNames.get(appointment.barberId) || appointment.barberId) };
