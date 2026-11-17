@@ -592,6 +592,22 @@ function staffRangeValue(value) {
   return torontoTimestamp(value).slice(0, 16).replace("T", " ");
 }
 
+function staffRangeTimestamp(value, original = "") {
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(value)) return null;
+  const local = `${value.replace(" ", "T")}:00`;
+  const guess = Date.parse(`${local}Z`);
+  if (Number.isNaN(guess)) return null;
+  // Preserve the original instant when an unchanged time occurs twice in autumn.
+  if (original && staffRangeValue(original) === value) return torontoTimestamp(original);
+  // Try nearby offsets and round-trip to reject invalid dates and spring gaps.
+  for (const day of [-1, 1]) {
+    const offset = torontoTimestamp(guess + day * 86400000).slice(19);
+    const timestamp = `${local}${offset}`;
+    if (!Number.isNaN(Date.parse(timestamp)) && staffRangeValue(timestamp) === value) return timestamp;
+  }
+  return null;
+}
+
 function addStaffRange(startTime = "", endTime = "") {
   const number = ++staffRangeSequence;
   const row = document.createElement("div"); row.className = "range-row";

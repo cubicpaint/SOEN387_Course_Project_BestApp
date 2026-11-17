@@ -236,6 +236,12 @@ async function main() {
     assert.equal(app.run("torontoTimestamp('2026-11-01T06:00:00Z')"),'2026-11-01T01:00:00-05:00');
     assert.equal(app.run("torontoTimestamp('2026-03-08T07:00:00Z')"),'2026-03-08T03:00:00-04:00');
     assert.equal(app.run("staffRangeValue('2026-11-01T06:00:00Z')"),'2026-11-01 01:00');
+    assert.equal(app.run("staffRangeTimestamp('2026-11-01 01:00', '2026-11-01T06:00:00Z')"),'2026-11-01T01:00:00-05:00');
+    assert.equal(app.run("staffRangeTimestamp('2026-11-01 01:00')"),'2026-11-01T01:00:00-04:00');
+    assert.equal(app.run("staffRangeTimestamp('2026-03-08 03:00')"),'2026-03-08T03:00:00-04:00');
+    assert.equal(app.run("staffRangeTimestamp('2026-03-08 01:30')"),'2026-03-08T01:30:00-05:00');
+    assert.equal(app.run("staffRangeTimestamp('2030-01-16 00:00')"),'2030-01-16T00:00:00-05:00');
+    assert.equal(app.run("staffRangeTimestamp('2026-03-08 02:30')"),null);
   } else if (scenario === 'missing_restored_key') {
     const incomplete = change(); delete incomplete.key;
     storage.set('bestapp.pendingChanges',JSON.stringify([incomplete]));
