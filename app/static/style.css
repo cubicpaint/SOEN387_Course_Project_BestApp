@@ -28,6 +28,13 @@ button:disabled { opacity: .55; cursor: default; }
 .appointments { list-style: none; padding: 0; }
 .appointments li { padding: 1rem 0; border-bottom: 1px solid #d8e0da; }
 .appointments span, .appointments small { display: block; }
+.actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: 1rem; }
+.appointments button { margin-top: .5rem; }
+.confirmation { display: flex; align-items: flex-start; gap: .6rem; margin: 1rem 0; }
+.confirmation input { width: 1.2rem; min-height: 1.2rem; margin-top: .25rem; flex-shrink: 0; }
+.range-row { border-bottom: 1px solid #d8e0da; padding-bottom: .75rem; margin-bottom: .75rem; }
+.range-row .fields { margin-bottom: .5rem; }
+code { overflow-wrap: anywhere; }
 [role="status"] { overflow-wrap: anywhere; }
 footer { font-size: .85rem; color: #526159; padding-top: 0; }
 [hidden] { display: none !important; }
