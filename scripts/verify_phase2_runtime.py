@@ -14,6 +14,7 @@ from urllib.request import urlopen
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
+import yaml
 
 from app.config import load_settings
 from app.data.database import create_engine_from_settings
@@ -76,8 +77,9 @@ def verify() -> None:
             correlation_ids.append(UUID(headers["X-Correlation-ID"]))
         require(len(set(correlation_ids)) == 2, "Correlation IDs must be fresh.")
         status, document, _ = response("/openapi.json")
-        require(status == 200 and set(document["paths"]) == {"/health/live", "/health/ready", "/auth/login", "/barbers", "/availability", "/appointments"},
-                "Runtime contract must expose only implemented paths.")
+        authored = yaml.safe_load((ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8"))
+        require(status == 200 and document["paths"] == authored["paths"],
+                "Runtime operations must match the current authored contract.")
         status, body, _ = response("/health/live?unexpected=1&unexpected=2")
         require(status == 422 and body["error"]["code"] == "validation_error", "Invalid query was accepted.")
         print("PASS: running health responses, headers, validation, and published contract", flush=True)
