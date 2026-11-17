@@ -1,6 +1,7 @@
 """Staff HTTP models and translation; scheduling policy stays in services."""
 
 from datetime import date as calendar_date, datetime
+import re
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Request
@@ -29,7 +30,7 @@ class StaffRange(BaseModel):
     @field_validator("startTime", "endTime", mode="before")
     @classmethod
     def timestamp_string(cls, value):
-        if not isinstance(value, str):
+        if not isinstance(value, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{2}:\d{2}", value) is None:
             raise ValueError("Availability timestamps must be ISO strings with Toronto offsets.")
         return value
 
