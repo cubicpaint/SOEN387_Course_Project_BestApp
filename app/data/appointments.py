@@ -151,6 +151,47 @@ class AppointmentRepository:
             Appointment.customer_id == customer_id, Appointment.status == "confirmed", Appointment.id != exclude_id,
         )))
 
+    def protect_change_block(
+        self, block: BookingBlock, appointment_id: str, *, owned: bool, required: bool
+    ) -> bool:
+        """Protect old and new blocks before altering any active allocation."""
+        allocated = exists().where(SlotAllocation.slot_id == AvailabilityBlock.id)
+        self_owned = exists().where(
+            SlotAllocation.slot_id == AvailabilityBlock.id, SlotAllocation.appointment_id == appointment_id,
+        )
+        result = self.session.execute(update(AvailabilityBlock).where(
+            AvailabilityBlock.id == block.id, AvailabilityBlock.version == block.version,
+            self_owned if owned else ~allocated,
+            AvailabilityBlock.enabled.is_(True) if required else True,
+        ).values(version=AvailabilityBlock.version + 1).execution_options(synchronize_session=False))
+        return result.rowcount == 1
+
+    def change_allocations(self, appointment_id: str, old_ids: set[str], new_ids: set[str]) -> None:
+        self.session.add_all(SlotAllocation(slot_id=slot_id, appointment_id=appointment_id)
+                             for slot_id in sorted(new_ids - old_ids))
+        self.session.flush()
+        if old_ids - new_ids:
+            self.session.execute(delete(SlotAllocation).where(
+                SlotAllocation.appointment_id == appointment_id, SlotAllocation.slot_id.in_(old_ids - new_ids),
+            ))
+
+    def update_appointment(
+        self, appointment: Appointment, expected_version: int, destination: tuple[BookingBlock, ...] | None
+    ) -> bool:
+        values = {"version": Appointment.version + 1}
+        if destination is None:
+            values["status"] = "cancelled"
+        else:
+            values.update(starts_at=destination[0].starts_at, ends_at=destination[-1].ends_at)
+        result = self.session.execute(update(Appointment).where(
+            Appointment.id == appointment.id, Appointment.customer_id == appointment.customer_id,
+            Appointment.status == "confirmed", Appointment.version == expected_version,
+        ).values(**values).execution_options(synchronize_session=False))
+        if result.rowcount == 1:
+            self.session.refresh(appointment)
+            return True
+        return False
+
     def add_appointment(
         self, *, customer_id: str, blocks: tuple[BookingBlock, ...], service: ServiceChoice
     ) -> dict:
