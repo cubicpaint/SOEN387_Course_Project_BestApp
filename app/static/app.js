@@ -47,7 +47,8 @@ let staffRangeRows = [];
 let staffRangeSequence = 0;
 
 function validChangeIntent(pending) {
-  if (!pending || !/^usr_[A-Za-z0-9_-]{1,60}$/.test(pending.userId) ||
+  if (!pending || typeof pending.userId !== "string" || typeof pending.key !== "string" ||
+      typeof pending.path !== "string" || !/^usr_[A-Za-z0-9_-]{1,60}$/.test(pending.userId) ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(pending.key) ||
       typeof pending.summary !== "string" || pending.summary.length > 500 ||
       typeof pending.ifMatch !== "string") return false;
@@ -284,7 +285,7 @@ async function login(event) {
     if (pendingForUser()) {
       ui["booking-status"].textContent = "A previous booking needs a definite result. Retry the same booking before choosing a new one.";
     } else ui["booking-status"].textContent = "";
-    if (pendingChangeForUser()) ui["change-status"].textContent = "A previous change needs a definite result. Retry that same change before starting another.";
+    if (pendingChangeForUser()) ui["change-status"].textContent = `Pending change: ${pendingChangeForUser().summary} Retry that same change before starting another.`;
     configureStaffBarbers();
     updateControls();
     if (customer()) await loadAppointments();
@@ -534,9 +535,12 @@ async function submitChange(intent = null) {
       method: pending.method, headers, ...(pending.body === null ? {} : { body: JSON.stringify(pending.body) }),
     });
     if (epoch !== authEpoch || attempt !== mutationAttempt) return;
+    const expectedId = pending.path.split("/").at(-1);
     const validSuccess = result.status === 200 && result.body && (pending.kind === "availability"
-      ? /^[a-f0-9]{64}$/.test(result.body.revision || "")
-      : typeof result.body.id === "string" && Number.isInteger(result.body.version));
+      ? /^[a-f0-9]{64}$/.test(result.body.revision || "") &&
+        pending.path === `/barbers/${result.body.barberId}/availability?date=${result.body.date}`
+      : result.body.id === expectedId && Number.isInteger(result.body.version) && result.body.version >= 1 &&
+        result.body.status === (pending.kind === "cancel" ? "cancelled" : "confirmed"));
     if (result.status >= 500 || !result.body || (result.ok && !validSuccess)) {
       ui["change-status"].textContent = "The change outcome is uncertain. Retry the same change with its preserved request and key.";
       return;
