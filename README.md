@@ -5,11 +5,11 @@
 **Course:** SOEN387  
 **Semester:** Fall 2026
 
-BestApp is a barbershop appointment-booking project. Customers can log in, browse service-aware availability, book a haircut, beard service, or both, and view their own upcoming appointments through a small browser interface or the API.
+BestApp is a barbershop appointment-booking project. Customers can log in, browse service-aware availability, book a haircut, beard service, or both, view their own upcoming appointments, change appointment times, and cancel. Assigned staff can view upcoming appointments and manage dated barber availability through the same small browser interface or the API.
 
-The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, authenticated booking, atomic block allocation, and durable booking retries. Phase 4's booking and milestone-interface criteria are verified. Cancellation, rescheduling, staff management, email notifications, and reminders remain later-phase work.
+The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, authenticated booking and management, atomic block allocation, and durable mutation retries. Email notifications, reminders, and optional appointment notes remain later-phase work.
 
-Phase 5 implementation is approved and in progress. Rescheduling will change time only: the original barber and service remain fixed. Staff availability edits will reject the entire change if it would remove an occupied block. Appointment changes, staff routes, and their interface will be documented as implemented after verification; emails and reminders remain later phases.
+Phase 5 implementation is under final verification. Rescheduling changes time only: the original barber and service remain fixed, following the user's approved refinement of the proposal. Staff availability edits reject the entire change if it would remove an occupied block. The verification record below distinguishes completed checks from those still in progress.
 
 ## Repository contents
 
@@ -28,10 +28,11 @@ Phase 5 implementation is approved and in progress. Rescheduling will change tim
 | [scripts/verify_phase3_runtime.py](scripts/verify_phase3_runtime.py) | Verify live login, public browsing, occupied intervals, and contracted errors using temporary fixtures |
 | [scripts/phase4_probe.py](scripts/phase4_probe.py) | Shared temporary fixtures, authenticated HTTP requests, and response-contract checks for Phase 4 scripts |
 | [scripts/verify_phase4_runtime.py](scripts/verify_phase4_runtime.py) | Verify booking, durable outcomes, ownership, and live conformance; optional restart/recreation checks |
+| [scripts/verify_phase5_runtime.py](scripts/verify_phase5_runtime.py) | Verify time changes, cancellation, staff schedules, original outcome replay, and live conformance |
 | [scripts/demo_booking_concurrency.py](scripts/demo_booking_concurrency.py) | Demonstrate authenticated contention and simultaneous retries against the running API |
 | [app/static/](app/static/) | Packaged HTML, JavaScript, and CSS for the browser workflow |
 
-The authored specification and running service publish all seven milestone operations across six API paths at `/openapi.json` and `/docs`: login, barber listing, availability, appointment creation, own-appointment listing, and the two health checks. The browser page at `/` and its fixed static assets are outside the OpenAPI operation list. Native FastAPI request/response models, bearer-security declarations, and HTTP responses are checked against the authored contract; publication alone does not prove runtime behavior.
+The authored specification and running service publish 14 operations across ten API paths at `/openapi.json` and `/docs`: the original seven milestone operations and seven owner/staff management operations. The browser page at `/` and its fixed static assets are outside the OpenAPI operation list. Native FastAPI request/response models, bearer-security declarations, and HTTP responses are checked against the authored contract; publication alone does not prove runtime behavior.
 
 ## Start with Docker Compose
 
@@ -109,7 +110,7 @@ For noninteractive provisioning, supply `BESTAPP_DEMO_PASSWORD` through the proc
 
 The command creates demo barbers Alex and Sam, plus 30-minute blocks from 09:00 to 17:00 on the next seven Toronto dates (224 blocks for two barbers). It converts those local intervals to UTC instants.
 
-Provisioning runs in one transaction. Rerunning it reuses existing users and slots, preserves password hashes, disabled blocks, versions, and bookings, and adds missing future blocks. It does not reset passwords or move existing slot identities. If an existing demo identity conflicts with the required setup, it reports a controlled failure and rolls back.
+Provisioning runs in one transaction. Rerunning it reuses existing users and slots, preserves password hashes, disabled blocks, versions, and bookings, and adds missing future blocks. A staff-edited date contains explicit enabled/disabled blocks for its complete Toronto day, so provisioning cannot reopen deliberately closed gaps. Provisioning and staff editors coordinate using barber locks. It does not reset passwords or move existing slot identities. If an existing demo identity conflicts with the required setup, it reports a controlled failure and rolls back.
 
 ## Log in
 
@@ -143,9 +144,31 @@ Retry an uncertain booking with the **same key and unchanged body**. Matching se
 
 `GET /appointments` requires the same customer authorization and accepts no filters. It returns only that customer's confirmed appointments whose start is greater than or equal to the trusted server time, ordered by start and ID. An empty list is valid. Responses contain the full service interval and first block's `slotId`. Confirmation records a persisted appointment; it does not indicate that an email was sent.
 
+## Change or cancel an appointment
+
+`GET /appointments/{appointmentId}` returns an owner's current appointment, including cancelled history, with a `version` and matching quoted numeric `ETag`, such as `"1"`. The original booking and upcoming-list response shapes remain unchanged.
+
+To reschedule, send `PUT /appointments/{appointmentId}` with JSON containing only `slotId`. Obtain replacement choices from `GET /appointments/{appointmentId}/availability?date=YYYY-MM-DD`; this owner-only view keeps the original barber/service and allows blocks already allocated to this appointment. A 60-minute appointment can therefore move forward by 30 minutes without losing its shared block. A destination belonging to another barber returns `409 barber_change_forbidden`; injected service/barber/customer fields are rejected.
+
+To cancel, send `DELETE /appointments/{appointmentId}` without a request body. Both writes require valid customer authorization, one `Idempotency-Key`, and one `If-Match` containing the exact ETag from the management read. Both return `200` with their recorded management snapshot and its ETag. A stale version returns `412 stale_version`; an already cancelled record cannot be changed by a new request.
+
+The existing appointment must start at least 24 elapsed hours after the trusted server decision time. Exactly 24 hours is eligible. A replacement must satisfy the two-hour minimum notice and the full duration/customer-conflict rules. The clock is sampled once after customer, appointment, and block protection. Browser time never authorizes a change. A failed reschedule preserves the original appointment, allocations, and block versions.
+
+Retries preserve the method, target, body, key, and precondition. A matching completed request returns its immutable original response before checking current version, state, or cutoff. Old booking/reschedule replies may describe an earlier state after a later cancellation; read the management resource or refresh upcoming appointments for current state. Cancellation retains the appointment history and releases all active blocks once.
+
+## Staff appointments and availability
+
+Staff may use only their assigned barbers; the shop staff account uses the same role with assignments to all barbers. `GET /barbers/{barberId}/appointments` returns upcoming confirmed appointments in start/ID order, including customer email for that barber. Staff cannot use customer-only appointment mutation routes.
+
+`GET /barbers/{barberId}/availability?date=YYYY-MM-DD` returns that Toronto date's configured ranges, enabled/occupied blocks, revision, and quoted revision ETag. It includes occupied and disabled blocks, without applying the customer booking-notice filter. `PUT` to the same path/query replaces the complete date using `{"ranges":[{"startTime":"2030-01-15T09:00:00-05:00","endTime":"2030-01-15T12:00:00-05:00"}]}`. An empty range list closes the date. Supply one idempotency key and the ETag in `If-Match`.
+
+Ranges require real Toronto offsets (`-05:00` or `-04:00` for current winter/summer dates), positive intervals, half-hour boundaries, and no overlap. End midnight may belong to the following date. Nonexistent spring times and incorrect offsets are rejected; explicit offsets distinguish repeated autumn times. Adjacent ranges are normalized together. Date edits materialize 46, 48, or 50 half-hour blocks across daylight-saving changes, keeping existing slot identities. Removing any occupied block rejects the whole request with `409 availability_occupied`. Stale forms return `412 stale_version`; concurrent block changes can return `409 availability_conflict`. These business outcomes replay durably; current staff authorization is required even for replay.
+
 ## Browser interface
 
-Open `http://localhost:8000/` after starting the API and provisioning demo accounts. The same-origin page provides login/logout, barber/service/date selection, available starts, booking confirmation, retrying a pending booking, and refreshing own appointments. Times display in `America/Toronto` with offsets to distinguish repeated daylight-saving clock times. The warning before confirmation explains that bookings less than 24 hours ahead cannot later be cancelled or rescheduled online. Online appointment changes are not implemented yet.
+Open `http://localhost:8000/` after starting the API and provisioning demo accounts. Customers can browse/book, refresh their appointments, select **Reschedule or cancel**, find replacement times, and review the cutoff before confirming. The appointment's barber and service stay fixed. Staff see an assigned-barber selector, upcoming appointments, and a simple dated range editor. Saving replaces the selected date; closing an occupied date is rejected.
+
+Times display in `America/Toronto` with offsets to distinguish repeated daylight-saving clock times. Staff range fields use explicit-offset timestamp strings. The warning before booking or rescheduling explains that a replacement less than 24 hours ahead cannot later be changed online. Uncertain booking and management replies retain their original requests and keys in tab-scoped storage; tokens remain only in memory. Log back into the same account and use the corresponding retry button. Historical replies trigger fresh reads instead of overwriting current appointment state.
 
 Tokens stay in page memory and are cleared on logout or reload. Only pending-booking metadata (customer ID, original body, retry key, and display summary) is kept in tab-scoped `sessionStorage`; passwords and tokens are not stored there. After reload or token expiry, log in as the same customer to recover a pending result. Other customers do not see that pending selection. While a result is uncertain, the page preserves the original selection/key and offers **Retry the same booking** instead of creating another intent. Keep the tab open until the result is resolved; if storage is unavailable, a reload cannot preserve its pending state.
 
@@ -233,7 +256,7 @@ The test suite includes OpenAPI validation, so you can run the pytest command on
 - Availability example ordering, distinct slot IDs, and Toronto local dates across timezone transitions.
 - Idempotency-key format, response-header declarations, and placeholder credentials.
 
-The original authored-contract suite contains 52 tests. Additional runtime-contract checks compare native login, browsing, health, and appointment models, query/header constraints, and bearer-security declarations with the authored specification. They validate the seven-operation published contract and actual HTTP success/error bodies and headers using the ASGI test client. These use controlled dependencies; separate unit, real PostgreSQL, and live acceptance checks provide authentication, booking, concurrency, rollback, and retry evidence.
+The original authored-contract suite contains 52 tests. Additional authored/native/runtime checks cover management/staff schemas, query/header constraints, bearer security, scoped errors, ETags, and all 14 operations' HTTP bodies and headers using the ASGI test client. These use controlled dependencies; separate unit, real PostgreSQL, and live acceptance checks provide authentication, booking, concurrency, rollback, and retry evidence.
 
 Example credentials are nonfunctional placeholders. Example dates illustrate request and response formats and are not live availability.
 
@@ -297,7 +320,7 @@ Token tests cover signature/algorithm/required claims, issuer/audience, exact ex
 
 Phase 3 verification completed on November 16, 2026: **311 tests passed**, comprising 274 unit/contract checks and 37 real PostgreSQL integration checks. OpenAPI validation and `pip check` passed. The rebuilt container passed both acceptance commands: persistence/restart/outage recovery and real HTTP login/browsing/error conformance. Temporary verification records were removed and the API/database were left running. One existing, nonfailing Starlette TestClient deprecation warning remains.
 
-That Phase 3 record predates booking and the browser workflow. Phase 4 now exercises real protected appointment routes in addition to the earlier test-only authorization routes. Appointment changes and notification integration remain unimplemented.
+That Phase 3 record predates booking and the browser workflow. Phase 4 extended it with real protected appointment routes, and Phase 5 extends it with owner changes and staff management. Notification integration remains unimplemented.
 
 For current Phase 4 acceptance and the authenticated concurrency demonstration:
 
