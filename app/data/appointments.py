@@ -3,12 +3,12 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.orm import Session
 
 from app.data.models import Appointment, AvailabilityBlock, SlotAllocation, User
 from app.domain.appointments import BookingBlock, utc_timestamp
-from app.domain.availability import service_duration_minutes
+from app.domain.availability import FreeBlock, service_duration_minutes
 from app.domain.types import Role, ServiceChoice
 
 
@@ -86,15 +86,70 @@ class AppointmentRepository:
         )
         return result.rowcount == 1
 
-    def customer_overlaps(self, customer_id: str, starts_at: datetime, ends_at: datetime) -> bool:
+    def customer_overlaps(
+        self, customer_id: str, starts_at: datetime, ends_at: datetime, *, exclude_id: str | None = None
+    ) -> bool:
         return self.session.scalar(
             select(exists().where(
                 Appointment.customer_id == customer_id,
                 Appointment.status == "confirmed",
                 Appointment.starts_at < ends_at,
                 Appointment.ends_at > starts_at,
+                Appointment.id != exclude_id if exclude_id is not None else True,
             ))
         )
+
+    def appointment(self, appointment_id: str) -> Appointment | None:
+        return self.session.get(Appointment, appointment_id)
+
+    def lock_appointment(self, appointment_id: str, customer_id: str) -> Appointment:
+        # Called after ownership is checked and the customer row is locked.
+        return self.session.scalar(
+            select(Appointment).where(Appointment.id == appointment_id, Appointment.customer_id == customer_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+
+    def management_snapshot(self, appointment: Appointment) -> dict:
+        # A cancelled appointment has no active allocations, but its permanent
+        # starting block still identifies its original barber/time interval.
+        slot_id = self.session.scalar(select(AvailabilityBlock.id).where(
+            AvailabilityBlock.barber_id == appointment.barber_id,
+            AvailabilityBlock.starts_at == appointment.starts_at,
+        ))
+        if slot_id is None:
+            raise RuntimeError("The appointment's permanent starting block is missing.")
+        return {**appointment_snapshot(appointment, slot_id), "version": appointment.version}
+
+    def allocated_blocks(self, appointment_id: str) -> tuple[BookingBlock, ...]:
+        rows = self.session.execute(select(*self._block_columns())
+            .join(SlotAllocation, SlotAllocation.slot_id == AvailabilityBlock.id)
+            .where(SlotAllocation.appointment_id == appointment_id)
+            .order_by(AvailabilityBlock.barber_id, AvailabilityBlock.starts_at, AvailabilityBlock.id))
+        return tuple(BookingBlock(*row) for row in rows)
+
+    def replacement_blocks(
+        self, appointment_id: str, barber_id: str, starts_at: datetime, date_end: datetime | None
+    ) -> tuple[FreeBlock, ...]:
+        from datetime import timedelta
+
+        other_allocation = exists().where(
+            SlotAllocation.slot_id == AvailabilityBlock.id, SlotAllocation.appointment_id != appointment_id,
+        )
+        query = select(AvailabilityBlock.id, AvailabilityBlock.barber_id,
+                       AvailabilityBlock.starts_at, AvailabilityBlock.ends_at).where(
+            AvailabilityBlock.barber_id == barber_id, AvailabilityBlock.enabled.is_(True), ~other_allocation,
+            AvailabilityBlock.starts_at >= starts_at,
+            AvailabilityBlock.ends_at <= datetime.max.replace(tzinfo=UTC),
+        )
+        if date_end is not None:
+            maximum = datetime.max.replace(tzinfo=UTC)
+            query = query.where(AvailabilityBlock.starts_at < min(date_end, maximum - timedelta(minutes=30)) + timedelta(minutes=30))
+        return tuple(FreeBlock(*row) for row in self.session.execute(query.order_by(AvailabilityBlock.starts_at)))
+
+    def customer_intervals(self, customer_id: str, exclude_id: str) -> tuple[tuple[datetime, datetime], ...]:
+        return tuple(self.session.execute(select(Appointment.starts_at, Appointment.ends_at).where(
+            Appointment.customer_id == customer_id, Appointment.status == "confirmed", Appointment.id != exclude_id,
+        )))
 
     def add_appointment(
         self, *, customer_id: str, blocks: tuple[BookingBlock, ...], service: ServiceChoice
