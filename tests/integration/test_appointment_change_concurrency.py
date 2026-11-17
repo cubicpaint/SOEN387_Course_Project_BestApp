@@ -12,6 +12,7 @@ from app.data.models import Appointment, AvailabilityBlock, SlotAllocation, Staf
 from app.data.staff import StaffRepository
 from app.domain.availability import TORONTO
 from app.domain.staff_availability import AvailabilityRange
+from app.domain.types import ServiceChoice
 from app.services.errors import ServiceUnavailable
 from app.services.staff import StaffService
 from tests.integration.booking_helpers import ONE, TWO, STAFF, START, book, error_code, stored_state
@@ -57,6 +58,67 @@ def test_identical_concurrent_reschedule_retries_do_not_move_twice(changes, sess
     assert first.status == second.status == 200 and first.body == second.body
     assert first.body["version"] == 2
     assert stored_state(session_factory)["outcomes"] == 2
+
+
+def test_simultaneous_conflicting_reschedules_preserve_first_key_binding(changes, session_factory):
+    apt = book(changes).body["id"]
+    first, second = together(
+        lambda: move(changes, apt, slot="slot_alex_2", key="one-intent"),
+        lambda: move(changes, apt, slot="slot_alex_4", key="one-intent"),
+    )
+    assert sorted(result.status for result in (first, second)) == [200, 409]
+    winner = first if first.status == 200 else second
+    loser = second if first.status == 200 else first
+    assert error_code(loser) == "idempotency_key_conflict"
+    assert changes.detail(ONE, apt).body == winner.body
+    assert winner.body["version"] == 2
+    assert stored_state(session_factory)["outcomes"] == 2
+
+
+def test_identical_simultaneous_cancellations_release_once(changes, session_factory):
+    apt = book(changes, choice=ServiceChoice.BOTH).body["id"]
+    first, second = together(
+        lambda: changes.cancel(ONE, apt, expected_version=1, key="one-cancellation"),
+        lambda: changes.cancel(ONE, apt, expected_version=1, key="one-cancellation"),
+    )
+    assert first.status == second.status == 200 and first.body == second.body
+    assert first.body["version"] == 2 and first.body["status"] == "cancelled"
+    state = stored_state(session_factory)
+    assert state["allocations"] == 0 and state["outcomes"] == 2
+    assert state["versions"]["slot_alex_0"] == state["versions"]["slot_alex_1"] == 3
+
+
+def test_combined_reschedule_second_block_competition_never_leaves_partial_move(changes, session_factory, monkeypatch):
+    apt = book(changes, choice=ServiceChoice.BOTH).body["id"]
+    before = stored_state(session_factory)
+    barrier = Barrier(2)
+    original_claim = AppointmentRepository.claim_block
+    original_protect = AppointmentRepository.protect_change_block
+    def claim(repository, block):
+        if block.id == "slot_alex_3":
+            barrier.wait(15)
+        return original_claim(repository, block)
+    def protect(repository, block, appointment_id, **kwargs):
+        if block.id == "slot_alex_3":
+            barrier.wait(15)
+        return original_protect(repository, block, appointment_id, **kwargs)
+    monkeypatch.setattr(AppointmentRepository, "claim_block", claim)
+    monkeypatch.setattr(AppointmentRepository, "protect_change_block", protect)
+    moved, booked = together(
+        lambda: move(changes, apt),
+        lambda: book(changes, TWO, slot="slot_alex_3", key="second-block-competitor"),
+    )
+    assert (moved.status, booked.status) in ((200, 409), (409, 201))
+    with session_factory() as session:
+        owned = set(session.scalars(select(SlotAllocation.slot_id).where(SlotAllocation.appointment_id == apt)))
+    state = stored_state(session_factory)
+    if moved.status == 200:
+        assert owned == {"slot_alex_2", "slot_alex_3"}
+        assert state["allocations"] == 2 and state["appointments"] == 1
+    else:
+        assert owned == {"slot_alex_0", "slot_alex_1"}
+        assert state["allocations"] == 3 and state["appointments"] == 2
+        assert all(state["versions"][slot] == before["versions"][slot] for slot in ("slot_alex_0", "slot_alex_1", "slot_alex_2"))
 
 
 def test_reschedule_competes_with_new_booking_for_destination(changes, session_factory, monkeypatch):
@@ -162,6 +224,33 @@ def test_change_lock_timeout_leaves_key_unbound(changes, session_factory):
                 future.result(15)
     assert stored_state(session_factory)["outcomes"] == 1
     assert move(changes, apt).status == 200
+
+
+def test_change_clock_follows_actual_appointment_row_wait(changes, session_factory, monkeypatch):
+    apt = book(changes).body["id"]
+    attempted, sampled = Event(), Event()
+    decision = [START - timedelta(hours=24)]
+    before = stored_state(session_factory)
+    original = AppointmentRepository.lock_appointment
+    def lock_appointment(repository, appointment_id, customer_id):
+        attempted.set()
+        return original(repository, appointment_id, customer_id)
+    def clock():
+        sampled.set()
+        return decision[0]
+    monkeypatch.setattr(AppointmentRepository, "lock_appointment", lock_appointment)
+    changes.clock = clock
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with session_factory.begin() as holder:
+            holder.execute(select(Appointment).where(Appointment.id == apt).with_for_update())
+            future = pool.submit(changes.cancel, ONE, apt, expected_version=1, key="appointment-wait")
+            assert attempted.wait(15) and not sampled.is_set()
+            decision[0] += timedelta(microseconds=1)
+        rejected = future.result(15)
+    assert sampled.is_set() and rejected.status == 422
+    assert error_code(rejected) == "change_cutoff_violation"
+    state = stored_state(session_factory)
+    assert state["allocations"] == 1 and state["versions"] == before["versions"]
 
 
 def test_staff_disable_and_reschedule_destination_have_one_winner(changes, session_factory, monkeypatch):
