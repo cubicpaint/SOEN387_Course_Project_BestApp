@@ -187,6 +187,16 @@ async function main() {
     app.queue.push(response(503,{error:{message:'Unavailable'}})); await app.run('saveStaffAvailability()');
     const mutation = app.calls.find(call => call.options.method === 'PUT');
     assert.deepEqual(JSON.parse(mutation.options.body),{ranges:[{startTime:'2030-01-15T10:30:00-05:00',endTime:'2030-01-15T12:00:00-05:00'}]});
+  } else if (scenario === 'staff_edit_summer_range') {
+    staffIdentity(app); app.nodes.get('staff-date').value = '2030-07-15';
+    const summer = {...staffSchedule(),date:'2030-07-15',blocks:[],
+      ranges:[{startTime:'2030-07-15T13:00:00Z',endTime:'2030-07-15T14:00:00Z'}]};
+    app.queue.push(versioned(200,summer,`"${revision}"`)); await app.run('loadStaffAvailability()');
+    assert.equal(app.run('staffRangeRows[0].start.value'),'2030-07-15 09:00');
+    app.run("staffRangeRows[0].start.value = '2030-07-15 09:30'; staffRangeRows[0].end.value = '2030-07-15 11:00';");
+    app.queue.push(response(503,{error:{message:'Unavailable'}})); await app.run('saveStaffAvailability()');
+    const mutation = app.calls.find(call => call.options.method === 'PUT');
+    assert.deepEqual(JSON.parse(mutation.options.body),{ranges:[{startTime:'2030-07-15T09:30:00-04:00',endTime:'2030-07-15T11:00:00-04:00'}]});
   } else if (scenario === 'staff_close_retry') {
     await loadSchedule(app); app.nodes.get('staff-close-date').checked = true;
     app.queue.push(Promise.reject(new Error('lost reply'))); await app.run('saveStaffAvailability()');
@@ -298,7 +308,7 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
 @pytest.mark.parametrize("scenario", [
     "change_restore", "change_blocks_booking", "reject_unsafe_restore", "time_only_choices", "reschedule_retry",
     "cancel_restore", "expired_change", "management_account_race", "mutation_account_race", "replacement_race", "stale_change",
-    "staff_editor", "staff_edit_local_range", "staff_close_retry", "staff_occupied_rejection", "staff_selection_race", "staff_list_account_race",
+    "staff_editor", "staff_edit_local_range", "staff_edit_summer_range", "staff_close_retry", "staff_occupied_rejection", "staff_selection_race", "staff_list_account_race",
     "staff_unassigned", "staff_invalid_local_time", "staff_dst_offsets",
     "missing_restored_key", "unrelated_success", "wrong_cancel_state", "wrong_staff_target", "revoked_permission",
     "logout_clears_summary",
