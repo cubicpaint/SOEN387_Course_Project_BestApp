@@ -7,9 +7,9 @@
 
 BestApp is a barbershop appointment-booking project. Customers can log in, browse service-aware availability, book a haircut, beard service, or both, view their own upcoming appointments, change appointment times, and cancel. Assigned staff can view upcoming appointments and manage dated barber availability through the same small browser interface or the API.
 
-The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, authenticated booking and management, atomic block allocation, and durable mutation retries. Email notifications, reminders, and optional appointment notes remain later-phase work.
+The runtime includes PostgreSQL, migrations, health checks, structured logs, demo provisioning, authenticated booking and management, atomic block allocation, and durable mutation retries. Email notifications, reminders, and optional appointment notes are not implemented.
 
-Phase 5's implementation criteria are verified. Rescheduling changes time only: the original barber and service remain fixed, following the user's approved refinement of the proposal. Staff availability edits reject the entire change if it would remove an occupied block. The verification record below describes the completed checks.
+Rescheduling changes time only: the original barber and service remain fixed. Staff availability edits reject the entire change if it would remove an occupied block. The verification record below describes the completed checks.
 
 ## Repository contents
 
@@ -24,15 +24,15 @@ Phase 5's implementation criteria are verified. Rescheduling changes time only: 
 | [migrations/](migrations/) | Explicit Alembic migration history; initial revision `0001_core` |
 | [compose.yaml](compose.yaml) | PostgreSQL, a one-off migration job, API, and opt-in provisioning command |
 | [scripts/provision_demo.py](scripts/provision_demo.py) | Add demo users, barbers, staff assignments, and future availability |
-| [scripts/verify_phase2_runtime.py](scripts/verify_phase2_runtime.py) | Verify live health behavior, restart persistence, and database-outage recovery |
-| [scripts/verify_phase3_runtime.py](scripts/verify_phase3_runtime.py) | Verify live login, public browsing, occupied intervals, and contracted errors using temporary fixtures |
-| [scripts/phase4_probe.py](scripts/phase4_probe.py) | Shared temporary fixtures, authenticated HTTP requests, and response-contract checks for Phase 4 scripts |
-| [scripts/verify_phase4_runtime.py](scripts/verify_phase4_runtime.py) | Verify booking, durable outcomes, ownership, and live conformance; optional restart/recreation checks |
-| [scripts/verify_phase5_runtime.py](scripts/verify_phase5_runtime.py) | Verify time changes, cancellation, staff schedules, original outcome replay, and live conformance |
+| [Runtime foundation verification](scripts/verify_phase2_runtime.py) | Verify live health behavior, restart persistence, and database-outage recovery |
+| [Authentication and browsing verification](scripts/verify_phase3_runtime.py) | Verify live login, public browsing, occupied intervals, and contracted errors using temporary fixtures |
+| [Shared verification fixtures](scripts/phase4_probe.py) | Shared temporary fixtures, authenticated HTTP requests, and response-contract checks for acceptance scripts |
+| [Booking verification](scripts/verify_phase4_runtime.py) | Verify booking, durable outcomes, ownership, and live conformance; optional restart/recreation checks |
+| [Appointment and staff verification](scripts/verify_phase5_runtime.py) | Verify time changes, cancellation, staff schedules, original outcome replay, and live conformance |
 | [scripts/demo_booking_concurrency.py](scripts/demo_booking_concurrency.py) | Demonstrate authenticated contention and simultaneous retries against the running API |
 | [app/static/](app/static/) | Packaged HTML, JavaScript, and CSS for the browser workflow |
 
-The authored specification and running service publish 14 operations across ten API paths at `/openapi.json` and `/docs`: the original seven milestone operations and seven owner/staff management operations. The browser page at `/` and its fixed static assets are outside the OpenAPI operation list. Native FastAPI request/response models, bearer-security declarations, and HTTP responses are checked against the authored contract; publication alone does not prove runtime behavior.
+The authored specification and running service publish 14 operations across ten API paths at `/openapi.json` and `/docs`, covering login, public browsing, booking, customer appointment management, assigned-barber staff management, and health checks. The browser page at `/` and its fixed static assets are outside the OpenAPI operation list. Native FastAPI request/response models, bearer-security declarations, and HTTP responses are checked against the authored contract; publication alone does not prove runtime behavior.
 
 ## Start with Docker Compose
 
@@ -87,7 +87,7 @@ docker compose run --rm migrate python -m alembic current
 | `JWT_TTL_SECONDS` | Token lifetime in seconds; default 1800, range 1–3600 |
 | `BESTAPP_DEMO_PASSWORD` | Optional password for new demo users; Compose reads it from `.env` or the process environment, local provisioning reads the process environment; otherwise prompted privately |
 
-Host Python settings read `.env`; process environment values take precedence. Compose constructs its own `DATABASE_URL` using the `db` hostname. Use matching credentials in both places. Missing/invalid required application configuration stops startup with a field-name diagnostic, without printing its value. JWT settings are validated only when the API is constructed; database migrations and demo provisioning do not require a signing secret. Email-provider settings remain later-phase work.
+Host Python settings read `.env`; process environment values take precedence. Compose constructs its own `DATABASE_URL` using the `db` hostname. Use matching credentials in both places. Missing/invalid required application configuration stops startup with a field-name diagnostic, without printing its value. JWT settings are validated only when the API is constructed; database migrations and demo provisioning do not require a signing secret. Email-provider configuration is not implemented.
 
 Tokens use HS256 with an explicitly allowed algorithm and required signature, issuer, audience, subject, issued-at time, and expiration checks. The signing secret is never generated again at API startup: retain the same private configuration across restarts. Changing it invalidates existing tokens.
 
@@ -172,7 +172,7 @@ Times display in `America/Toronto` with offsets to distinguish repeated daylight
 
 Tokens stay in page memory and are cleared on logout or reload. Only pending-booking metadata (customer ID, original body, retry key, and display summary) is kept in tab-scoped `sessionStorage`; passwords and tokens are not stored there. After reload or token expiry, log in as the same customer to recover a pending result. Other customers do not see that pending selection. While a result is uncertain, the page preserves the original selection/key and offers **Retry the same booking** instead of creating another intent. Keep the tab open until the result is resolved; if storage is unavailable, a reload cannot preserve its pending state.
 
-The page uses plain HTML, CSS, and JavaScript served by FastAPI. Its assets are included in the installed Python package and Docker image. No frontend build, Node runtime, new backend dependency, or schema migration is required for Phase 4.
+The page uses plain HTML, CSS, and JavaScript served by FastAPI. Its assets are included in the installed Python package and Docker image. Running the interface requires no frontend build or Node runtime.
 
 ## Local Python development
 
@@ -258,7 +258,7 @@ The test suite includes OpenAPI validation, so you can run the pytest command on
 - Availability example ordering, distinct slot IDs, and Toronto local dates across timezone transitions.
 - Idempotency-key format, response-header declarations, and placeholder credentials.
 
-The original authored-contract suite contains 52 tests. Additional authored/native/runtime checks cover management/staff schemas, query/header constraints, bearer security, scoped errors, ETags, and all 14 operations' HTTP bodies and headers using the ASGI test client. These use controlled dependencies; separate unit, real PostgreSQL, and live acceptance checks provide authentication, booking, concurrency, rollback, and retry evidence.
+Authored/native/runtime checks cover management/staff schemas, query/header constraints, bearer security, scoped errors, ETags, and all 14 operations' HTTP bodies and headers using the ASGI test client. These use controlled dependencies; separate unit, real PostgreSQL, and live acceptance checks provide authentication, booking, concurrency, rollback, and retry evidence.
 
 Example credentials are nonfunctional placeholders. Example dates illustrate request and response formats and are not live availability.
 
@@ -296,7 +296,7 @@ The isolated unsafe control deliberately omits the customer lock and synchronize
 Optional JavaScript state checks use an installed `node` executable through a small DOM/fetch substitute. They cover lost replies, same-key retry, pending-state restoration, account switches, stale availability/list responses, token expiry, and login while browsing. They are not full-browser automation. Without Node those cases explicitly skip, while Python asset/HTML/package checks still run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/unit/test_frontend.py tests/unit/test_phase5_frontend.py -q
+.\.venv\Scripts\python.exe -m pytest tests/unit -k frontend -q
 ```
 
 For the running-container acceptance check:
@@ -307,24 +307,18 @@ For the running-container acceptance check:
 
 Run this separately from the integration suite. It builds/starts this Compose stack, checks live health responses and the published contract, inserts a uniquely named temporary barber, verifies it survives restarts and container recreation with the same volume, and briefly stops PostgreSQL to verify liveness/readiness and recovery. It then removes only its own temporary record and leaves the API/database running. Existing application data is retained.
 
-Phase 2 verification completed on November 15, 2026: all 118 cases passed (98 unit/contract checks and 20 real PostgreSQL integration checks), alongside the running-container restart, persistence, outage, and recovery checks. That record covers the foundation and health operations; Phase 3 extends the evidence with authentication and browsing checks below.
-
-For Phase 3 live HTTP acceptance, start the API with the current build and run:
+For authentication and browsing acceptance, start the API with the current build and run:
 
 ```powershell
 docker compose up -d --build api
 .\.venv\Scripts\python.exe -m scripts.verify_phase3_runtime
 ```
 
-This command needs the host development dependencies and the same database/JWT configuration as the API. It inserts a uniquely named temporary customer, barber, four blocks, and an occupied interval; checks real login/token issuance, public browsing, complete service durations, and negative responses against OpenAPI; then removes only its own fixtures. It preserves demonstration data and never prints passwords or tokens. Run acceptance commands separately from PostgreSQL integration tests because the Phase 2 command restarts the database.
+This command needs the host development dependencies and the same database/JWT configuration as the API. It inserts a uniquely named temporary customer, barber, four blocks, and an occupied interval; checks real login/token issuance, public browsing, complete service durations, and negative responses against OpenAPI; then removes only its own fixtures. It preserves demonstration data and never prints passwords or tokens. Run the foundation restart/outage checks separately from PostgreSQL integration tests.
 
 Token tests cover signature/algorithm/required claims, issuer/audience, exact expiry, and malformed/duplicate bearer headers. Service tests reject unauthorized callers without HTTP routing. Availability checks cover occupied/disabled/missing blocks, the exact two-hour boundary, UTC/local date differences, midnight continuation, both daylight-saving changes, stable slot IDs, and calendar limits.
 
-Phase 3 verification completed on November 16, 2026: **311 tests passed**, comprising 274 unit/contract checks and 37 real PostgreSQL integration checks. OpenAPI validation and `pip check` passed. The rebuilt container passed both acceptance commands: persistence/restart/outage recovery and real HTTP login/browsing/error conformance. Temporary verification records were removed and the API/database were left running. One existing, nonfailing Starlette TestClient deprecation warning remains.
-
-That Phase 3 record predates booking and the browser workflow. Phase 4 extended it with real protected appointment routes, and Phase 5 extends it with owner changes and staff management. Notification integration remains unimplemented.
-
-For current Phase 4 acceptance and the authenticated concurrency demonstration:
+For booking acceptance and the authenticated concurrency demonstration:
 
 ```powershell
 docker compose up -d --build api
@@ -332,7 +326,7 @@ docker compose up -d --build api
 .\.venv\Scripts\python.exe -m scripts.demo_booking_concurrency
 ```
 
-Both scripts require the host development dependencies, a running current API, and matching private database/JWT configuration. Their shared `phase4_probe` creates uniquely named temporary customers, a staff identity, barbers, and blocks; it logs in through HTTP, validates responses against OpenAPI, and removes only its own fixtures. They preserve provisioned demo data and do not print passwords, tokens, or keys. The concurrency script uses independent authenticated HTTP requests and checks both responses and committed row counts for same-slot competition, 60/30-minute competition, cross-barber customer overlap, identical retries, and conflicting retries. Its bounded start barrier launches competitors together; isolated integration barriers provide the more controlled race reproduction.
+Both scripts require the host development dependencies, a running current API, and matching private database/JWT configuration. Their shared probe creates uniquely named temporary customers, a staff identity, barbers, and blocks; it logs in through HTTP, validates responses against OpenAPI, and removes only its own fixtures. They preserve provisioned demo data and do not print passwords, tokens, or keys. The concurrency script uses independent authenticated HTTP requests and checks both responses and committed row counts for same-slot competition, 60/30-minute competition, cross-barber customer overlap, identical retries, and conflicting retries. Its bounded start barrier launches competitors together; isolated integration barriers provide the more controlled race reproduction.
 
 To also verify appointments, allocations, and recorded outcomes across API/database restarts and container recreation with the retained named volume:
 
@@ -342,13 +336,7 @@ To also verify appointments, allocations, and recorded outcomes across API/datab
 
 Run restart/outage acceptance separately from integration tests or other demos, because those checks restart shared containers. No script enables unsafe behavior in the deployed API.
 
-The rebuilt container passed the default Phase 4 live acceptance command and all five authenticated concurrency demonstration scenarios. Real headless Edge checks exercised the visible page: login, combined-service availability, the 24-hour warning, discarding a real committed `201` reply, retrying with the original key/body, own listing, second-customer privacy, staff feedback, and logout. Database checks confirmed one appointment, two allocations, and one outcome for that retry workflow. Temporary verification fixtures were cleaned up. The optional Node state checks remain useful narrower checks, separate from this real-browser evidence.
-
-Phase 4 verification on November 16, 2026 covered **444 unique passing tests: 363 unit/contract checks and 81 real PostgreSQL cases**. The full regression run passed 443 tests in 598.17 seconds before the additional isolation regression was collected; that new PostgreSQL case then passed alongside three already-counted database-settings checks, and collection confirms 444 cases. OpenAPI validation and `pip check` passed. After a stricter raw-response comparison exposed JSONB object-key reordering, deterministic booking serialization fixed the reproduced real HTTP/database failure; all 83 affected HTTP, native-contract, and real-database checks passed after the correction. The existing Starlette TestClient deprecation warning remains nonfailing.
-
-The foundation acceptance command passed retained-data/revision checks across restart and container recreation, then an actual database outage with liveness `200`, readiness `503`, and recovery. Phase 4 acceptance with `--restart` also passed appointment, full-allocation, and immutable-outcome persistence across both restart and recreation. The final image was rebuilt after the serialization correction and passed Phase 4 restart/recreation acceptance again; a live raw-body check confirmed byte-identical creation/replay responses with fresh correlation IDs and one complete appointment. Earlier login/browsing acceptance also passed. Temporary verification records and isolated test schemas were removed, and the API/database were left healthy. Phase 4 is complete; the milestone demonstration is prepared. This does not claim the presentation has occurred.
-
-## Verify Phase 5
+## Verify appointment and staff management
 
 Run the current container, then the live management acceptance check:
 
@@ -371,16 +359,18 @@ Unit and PostgreSQL boundary tests inject an aware UTC clock through the service
 
 The full suite includes real PostgreSQL races for same-version reschedules, cancellation/rescheduling, simultaneous identical/conflicting retries, full-duration destination competition, customer overlap across barbers, released-slot booking, staff edits, and genuine lock timeouts. Fault injection verifies rollback after allocation changes, appointment writes, and outcome persistence. Additional tests cover DST, extreme timestamps, revoked staff assignments, rerun provisioning, and browser account/retry state.
 
-Phase 5 verification on November 16, 2026 covered **712 unique passing tests: 562 unit/contract checks and 150 real PostgreSQL cases**. The full regression run passed 711 tests in 1146.90 seconds before one later frontend privacy regression was collected. The final unit/contract run passed all 562, including that new case, in 38.90 seconds; collection confirms 712. OpenAPI validation and `pip check` passed. The existing nonfailing Starlette TestClient warning remains.
+## Verification results
 
-The final rebuilt container passed earlier login/browsing and Phase 4 acceptance, all five authenticated booking contention scenarios, and Phase 5 live acceptance. Real headless Edge exercised visible booking, the required shared-block move, cancellation, staff views, whole-edit occupied rejection, date closure/reopening, account privacy, and retries after deliberately discarding committed replies. Database checks confirmed one cancelled appointment at version 3, unchanged barber/service, the moved start, no allocations, six durable outcomes and preserved slot identities. These are actual browser checks in addition to the optional Node state tests; their local helper stays ignored under `build/`.
+Verification on November 16, 2026 covered **712 unique passing tests: 562 unit/contract checks and 150 real PostgreSQL cases**. The full regression run passed 711 tests in 1146.90 seconds before one later frontend privacy regression was collected. The final unit/contract run passed all 562, including that new case, in 38.90 seconds; collection confirms 712. OpenAPI validation and `pip check` passed. The existing nonfailing Starlette TestClient warning remains.
 
-Foundation acceptance passed retained-data/revision restart/recreation checks and actual database outage recovery. Phase 5 `--restart` passed persistence of active reschedules, cancelled history, allocations, staff revisions and all outcome bindings, including exact body/status/ETag replay after both restart and container recreation. Temporary live accounts and isolated test schemas were removed; liveness and readiness returned `200`. Phase 5 is complete; notifications and reminders remain later work.
+The rebuilt container passed login/browsing, booking, and appointment/staff management acceptance, plus all five authenticated booking contention scenarios. Real headless Edge exercised visible booking, the shared-block move, cancellation, staff views, whole-edit occupied rejection, date closure/reopening, account privacy, and retries after deliberately discarding committed replies. Database checks confirmed one cancelled appointment at version 3, unchanged barber/service, the moved start, no allocations, six durable outcomes and preserved slot identities. These are actual browser checks in addition to the optional Node state tests; their local helper stays ignored under `build/`.
 
-## Five-step milestone demonstration
+Foundation acceptance passed retained-data/revision restart/recreation checks and actual database outage recovery, with liveness staying `200`, readiness returning `503`, and readiness recovering afterward. Management restart checks passed persistence of active reschedules, cancelled history, allocations, staff revisions and all outcome bindings, including exact body/status/ETag replay after both restart and container recreation. Temporary live accounts and isolated test schemas were removed; liveness and readiness returned `200`.
+
+## Demonstration workflow
 
 1. Start the current Compose build, check `/health/ready`, and run `docker compose run --rm provision`. Open `http://localhost:8000/` and log in as `customer.one@example.com` with the private provisioned password.
 2. Choose a future Toronto date, barber, and **Haircut and beard**. Browse starts, read the change-cutoff warning, and confirm. Show the 60-minute appointment in the customer's upcoming list.
 3. Log out and log in as `customer.two@example.com`. Show that the first customer's appointment is absent. Use `/docs` or the acceptance script to demonstrate a protected operation rejecting missing/forged authorization or a valid staff account.
 4. Run `.\.venv\Scripts\python.exe -m scripts.demo_booking_concurrency` to show one winner under contention, full-duration allocation, identical replay, and conflicting key reuse. With `TEST_DATABASE_URL` configured, run the isolated `-k unsafe` command above to contrast the reproduced customer-overlap race with the protected API behavior.
-5. Run `.\.venv\Scripts\python.exe -m scripts.verify_phase4_runtime --restart` to demonstrate persisted appointments and outcomes, then refresh the browser list. Phase 5 now adds time changes, cancellation, and staff schedules; email notifications and reminders remain later work.
+5. Run `.\.venv\Scripts\python.exe -m scripts.verify_phase5_runtime --restart` to demonstrate appointment changes, staff schedules, persisted appointments and recorded outcomes. Refresh the browser list afterward. Email notifications and reminders are not implemented.
