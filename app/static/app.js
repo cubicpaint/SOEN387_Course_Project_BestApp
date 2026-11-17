@@ -199,6 +199,7 @@ function resetAccountViews() {
   staffRevision = null;
   staffRangeRows = [];
   ui["management-section"].hidden = true;
+  ui["management-summary"].textContent = "";
   ui["staff-section"].hidden = true;
   ui["change-confirm"].checked = false;
   ui["change-slots"].replaceChildren();

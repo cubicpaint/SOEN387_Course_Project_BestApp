@@ -265,6 +265,12 @@ async function main() {
     assert.equal(pending.ifMatch,'"3"');
     assert.equal(app.nodes.get('change-retry-button').hidden,false);
     assert.match(app.nodes.get('change-status').textContent,/authorized account/);
+  } else if (scenario === 'logout_clears_summary') {
+    app.queue.push(versioned(200,appointment)); await app.run("openAppointment('apt_one')");
+    assert.match(app.nodes.get('management-summary').textContent,/Alex/);
+    app.run('signOut()'); identify(app,'usr_two');
+    assert.equal(app.nodes.get('management-summary').textContent,'');
+    assert.equal(app.nodes.get('management-section').hidden,true);
   } else throw new Error('Unknown scenario');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
@@ -277,6 +283,7 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
     "staff_editor", "staff_close_retry", "staff_occupied_rejection", "staff_selection_race", "staff_list_account_race",
     "staff_unassigned", "staff_missing_offset", "staff_dst_offsets",
     "missing_restored_key", "unrelated_success", "wrong_cancel_state", "wrong_staff_target", "revoked_permission",
+    "logout_clears_summary",
 ])
 def test_management_state_machine(scenario):
     node = shutil.which("node")
