@@ -35,6 +35,11 @@ class DemoRepository:
     def all_barber_ids(self) -> list[str]:
         return list(self.session.scalars(select(Barber.id)))
 
+    def lock_barbers(self, barber_ids: list[str]) -> None:
+        # Staff date replacements use this same row before scanning or
+        # inserting blocks, including dates with no existing availability.
+        self.session.execute(select(Barber.id).where(Barber.id.in_(barber_ids)).order_by(Barber.id).with_for_update()).all()
+
     def ensure_staff_assignment(self, staff_id: str, barber_id: str) -> bool:
         if self.session.get(StaffBarber, (staff_id, barber_id)) is not None:
             return False

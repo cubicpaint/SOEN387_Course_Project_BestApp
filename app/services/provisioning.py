@@ -140,7 +140,8 @@ def provision_demo(
                 if repository.ensure_staff_assignment(staff_id, barber_id):
                     assignments_created += 1
 
-            for barber in barbers:
+            repository.lock_barbers([barber.id for barber in barbers])
+            for barber in sorted(barbers, key=lambda value: value.id):
                 for window in windows:
                     block = repository.block_at(barber.id, window.starts_at)
                     if block is not None:
