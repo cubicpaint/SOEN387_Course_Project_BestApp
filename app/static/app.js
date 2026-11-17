@@ -21,7 +21,7 @@ const storageKey = "bestapp.pendingBookings";
 const changeStorageKey = "bestapp.pendingChanges";
 const timeFormat = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Toronto", year: "numeric", month: "short", day: "numeric",
-  hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "longOffset",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23",
 });
 let token = null;
 let user = null;

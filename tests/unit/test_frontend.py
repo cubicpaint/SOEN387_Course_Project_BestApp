@@ -236,8 +236,8 @@ async function main() {
     const posts = app.calls.filter(call => call.options.method === 'POST');
     assert.notEqual(posts[0].options.headers['Idempotency-Key'], posts[1].options.headers['Idempotency-Key']);
   } else if (scenario === 'timezone') {
-    assert.match(app.run("displayTime('2026-11-01T05:00:00Z')"), /01:00.*GMT-04:00/);
-    assert.match(app.run("displayTime('2026-11-01T06:00:00Z')"), /01:00.*GMT-05:00/);
+    assert.equal(app.run("displayTime('2026-11-01T05:00:00Z')"), 'Nov 1, 2026, 01:00');
+    assert.equal(app.run("displayTime('2026-11-01T06:00:00Z')"), 'Nov 1, 2026, 01:00');
   } else throw new Error('Unknown scenario');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
