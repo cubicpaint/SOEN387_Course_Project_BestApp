@@ -235,6 +235,36 @@ async function main() {
     assert.equal(app.run("torontoTimestamp('2026-11-01T05:00:00Z')"),'2026-11-01T01:00:00-04:00');
     assert.equal(app.run("torontoTimestamp('2026-11-01T06:00:00Z')"),'2026-11-01T01:00:00-05:00');
     assert.equal(app.run("torontoTimestamp('2026-03-08T07:00:00Z')"),'2026-03-08T03:00:00-04:00');
+  } else if (scenario === 'missing_restored_key') {
+    const incomplete = change(); delete incomplete.key;
+    storage.set('bestapp.pendingChanges',JSON.stringify([incomplete]));
+    const restored = createContext(); await new Promise(setImmediate); identify(restored);
+    assert.equal(restored.run('pendingChanges.size'),0);
+    assert.equal(restored.nodes.get('change-retry-button').hidden,true);
+  } else if (scenario === 'unrelated_success') {
+    chooseChange(app); app.queue.push(versioned(200,{...appointment,id:'apt_other',version:4}));
+    await app.run("changeAppointment('reschedule')");
+    assert.equal(app.run('pendingChanges.size'),1);
+    assert.match(app.nodes.get('change-status').textContent,/uncertain/);
+    assert.equal(app.calls.filter(call => call.path === '/appointments').length,0);
+  } else if (scenario === 'wrong_cancel_state') {
+    chooseChange(app); app.queue.push(versioned(200,{...appointment,version:4}));
+    await app.run("changeAppointment('cancel')");
+    assert.equal(app.run('pendingChanges.size'),1);
+    assert.match(app.nodes.get('change-status').textContent,/uncertain/);
+  } else if (scenario === 'wrong_staff_target') {
+    await loadSchedule(app);
+    app.queue.push(versioned(200,staffSchedule('b'.repeat(64),'bar_two'),`"${'b'.repeat(64)}"`));
+    await app.run('saveStaffAvailability()');
+    assert.equal(app.run('pendingChanges.size'),1);
+    assert.match(app.nodes.get('change-status').textContent,/uncertain/);
+  } else if (scenario === 'revoked_permission') {
+    chooseChange(app); app.queue.push(response(403,{error:{code:'forbidden',message:'Permission changed'}}));
+    await app.run("changeAppointment('reschedule')");
+    const pending = JSON.parse(app.run('JSON.stringify(pendingChangeForUser())'));
+    assert.equal(pending.ifMatch,'"3"');
+    assert.equal(app.nodes.get('change-retry-button').hidden,false);
+    assert.match(app.nodes.get('change-status').textContent,/authorized account/);
   } else throw new Error('Unknown scenario');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
@@ -246,6 +276,7 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
     "cancel_restore", "expired_change", "management_account_race", "mutation_account_race", "replacement_race", "stale_change",
     "staff_editor", "staff_close_retry", "staff_occupied_rejection", "staff_selection_race", "staff_list_account_race",
     "staff_unassigned", "staff_missing_offset", "staff_dst_offsets",
+    "missing_restored_key", "unrelated_success", "wrong_cancel_state", "wrong_staff_target", "revoked_permission",
 ])
 def test_management_state_machine(scenario):
     node = shutil.which("node")
