@@ -585,8 +585,8 @@ function addStaffRange(startTime = "", endTime = "") {
   const fields = document.createElement("div"); fields.className = "fields";
   const start = document.createElement("input"); start.id = `range-start-${number}`; start.type = "text"; start.maxLength = 40; start.value = startTime;
   const end = document.createElement("input"); end.id = `range-end-${number}`; end.type = "text"; end.maxLength = 40; end.value = endTime;
-  const startLabel = document.createElement("label"); startLabel.htmlFor = start.id; startLabel.textContent = "Range start (Toronto with offset)"; startLabel.append(start);
-  const endLabel = document.createElement("label"); endLabel.htmlFor = end.id; endLabel.textContent = "Range end (Toronto with offset)"; endLabel.append(end);
+  const startLabel = document.createElement("label"); startLabel.htmlFor = start.id; startLabel.textContent = "Range start (with offset)"; startLabel.append(start);
+  const endLabel = document.createElement("label"); endLabel.htmlFor = end.id; endLabel.textContent = "Range end (with offset)"; endLabel.append(end);
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "secondary"; remove.textContent = "Remove range";
   const entry = { node: row, start, end };
   remove.addEventListener("click", () => {
@@ -661,7 +661,7 @@ function saveStaffAvailability() {
   if ((!ui["staff-close-date"].checked && ranges.length === 0) || ranges.some(range =>
       !offsetTime.test(range.startTime) || !offsetTime.test(range.endTime) ||
       Number.isNaN(Date.parse(range.startTime)) || Number.isNaN(Date.parse(range.endTime)))) {
-    ui["staff-availability-status"].textContent = "Complete each range using a Toronto timestamp with an explicit offset, or select Close this date.";
+    ui["staff-availability-status"].textContent = "Complete each range using a timestamp with an explicit offset, or select Close this date.";
     return;
   }
   const query = new URLSearchParams({ date: staffRevision.date });

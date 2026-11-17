@@ -34,14 +34,14 @@
 
     <section aria-labelledby="browse-heading">
       <h2 id="browse-heading">2. Find an appointment</h2>
-      <p>All dates and times are shown in <strong>America/Toronto</strong>. Availability is checked again when you book.</p>
+      <p>Availability is checked again when you book.</p>
       <form id="availability-form">
         <fieldset id="browse-fields">
           <legend>Appointment preferences</legend>
           <div class="fields">
             <label for="barber">Barber<select id="barber" required><option value="">Loading barbers…</option></select></label>
             <label for="service">Service<select id="service"><option value="haircut">Haircut — 30 minutes</option><option value="beard">Beard — 30 minutes</option><option value="both">Haircut and beard — 60 minutes</option></select></label>
-            <label for="date">Toronto date<input id="date" type="date" required></label>
+            <label for="date">Date<input id="date" type="date" required></label>
           </div>
           <button id="availability-button" type="submit">Find availability</button>
         </fieldset>
@@ -75,7 +75,7 @@
       <p>The barber and service stay the same. The server checks the 24-hour cutoff when you confirm a change. Replacement times require at least two hours' notice.</p>
       <form id="change-availability-form">
         <div class="fields">
-          <label for="change-date">Replacement Toronto date<input id="change-date" type="date" required></label>
+          <label for="change-date">Replacement date<input id="change-date" type="date" required></label>
         </div>
         <button id="change-availability-button" type="submit" class="secondary">Find replacement times</button>
       </form>
@@ -99,7 +99,7 @@
       <form id="staff-availability-form">
         <div class="fields">
           <label for="staff-barber">Assigned barber<select id="staff-barber" required></select></label>
-          <label for="staff-date">Toronto date<input id="staff-date" type="date" required></label>
+          <label for="staff-date">Date<input id="staff-date" type="date" required></label>
         </div>
         <button id="staff-load-button" type="submit" class="secondary">Load this date</button>
         <button id="staff-appointments-button" type="button" class="secondary">View upcoming appointments</button>
@@ -108,7 +108,7 @@
       <ul id="staff-configured" class="appointments"></ul>
       <fieldset id="staff-editor" disabled>
         <legend>Replace this date's available ranges</legend>
-        <p>Use Toronto timestamps with an explicit offset, for example <code>2026-11-20T09:00:00-05:00</code>. Summer times use <code>-04:00</code>. Start and end times must fall on the hour or half-hour.</p>
+        <p>Use timestamps with an explicit offset, for example <code>2026-11-20T09:00:00-05:00</code>. Summer times use <code>-04:00</code>. Start and end times must fall on the hour or half-hour.</p>
         <div id="staff-ranges"></div>
         <button id="staff-add-range-button" type="button" class="secondary">Add range</button>
         <label class="confirmation" for="staff-close-date"><input id="staff-close-date" type="checkbox"> Close this date instead of using ranges.</label>

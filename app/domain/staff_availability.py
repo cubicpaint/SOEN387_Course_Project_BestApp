@@ -39,13 +39,13 @@ def normalize_ranges(day: date, ranges: Iterable[AvailabilityRange]) -> tuple[Av
     for interval in ranges:
         for boundary in (interval.starts_at, interval.ends_at):
             if boundary.tzinfo is None or boundary.utcoffset() is None:
-                raise InvalidAvailability("Availability boundaries require explicit Toronto offsets.")
+                raise InvalidAvailability("Availability boundaries require explicit offsets.")
             try:
                 local = boundary.astimezone(TORONTO)
             except (OverflowError, ValueError):
                 raise InvalidAvailability("The availability timestamp is outside the supported calendar.") from None
             if boundary.utcoffset() != local.utcoffset():
-                raise InvalidAvailability("Availability offsets must match America/Toronto.")
+                raise InvalidAvailability("Availability offsets must match the shop's local time.")
             if local.minute not in (0, 30) or local.second or local.microsecond:
                 raise InvalidAvailability("Availability boundaries must follow the half-hour grid.")
         try:
@@ -53,7 +53,7 @@ def normalize_ranges(day: date, ranges: Iterable[AvailabilityRange]) -> tuple[Av
         except (OverflowError, ValueError):
             raise InvalidAvailability("The availability timestamp is outside the supported calendar.") from None
         if not first <= start < end <= last:
-            raise InvalidAvailability("Ranges must be positive and stay within the selected Toronto date.")
+            raise InvalidAvailability("Ranges must be positive and stay within the selected date.")
         ordered.append(AvailabilityRange(start, end))
     merged = []
     for interval in sorted(ordered, key=lambda value: value.starts_at):
