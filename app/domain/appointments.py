@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.domain.availability import BLOCK_DURATION, MINIMUM_NOTICE, TORONTO, service_duration_minutes
 from app.domain.types import ServiceChoice
@@ -58,6 +58,14 @@ def booking_notice_satisfied(starts_at: datetime, now: datetime) -> bool:
         if instant.tzinfo is None or instant.utcoffset() is None:
             raise ValueError("Booking times must include a timezone.")
     return starts_at.astimezone(UTC) - now.astimezone(UTC) >= MINIMUM_NOTICE
+
+
+def change_notice_satisfied(starts_at: datetime, now: datetime) -> bool:
+    """Cancellation and time changes require at least 24 elapsed hours."""
+    for instant in (starts_at, now):
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            raise ValueError("Appointment change times must include a timezone.")
+    return starts_at.astimezone(UTC) - now.astimezone(UTC) >= timedelta(hours=24)
 
 
 def intervals_overlap(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
