@@ -23,6 +23,9 @@ const timeFormat = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Toronto", year: "numeric", month: "short", day: "numeric",
   hour: "2-digit", minute: "2-digit", hourCycle: "h23",
 });
+const clockFormat = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
 let token = null;
 let user = null;
 let selected = null;
@@ -125,6 +128,12 @@ function customer() {
 
 function displayTime(value) {
   return timeFormat.format(new Date(value));
+}
+
+function displayRange(startTime, endTime) {
+  const end = torontoDate(startTime) === torontoDate(endTime)
+    ? clockFormat.format(new Date(endTime)) : displayTime(endTime);
+  return `${displayTime(startTime)} to ${end}`;
 }
 
 function summary(slot, service, barberName) {

@@ -238,6 +238,10 @@ async function main() {
   } else if (scenario === 'timezone') {
     assert.equal(app.run("displayTime('2026-11-01T05:00:00Z')"), 'Nov 1, 2026, 01:00');
     assert.equal(app.run("displayTime('2026-11-01T06:00:00Z')"), 'Nov 1, 2026, 01:00');
+    assert.equal(app.run("displayRange('2026-11-18T14:00:00Z', '2026-11-18T14:30:00Z')"), 'Nov 18, 2026, 09:00 to 09:30');
+    assert.equal(app.run("displayRange('2026-11-19T14:00:00Z', '2026-11-19T22:00:00Z')"), 'Nov 19, 2026, 09:00 to 17:00');
+    assert.equal(app.run("displayRange('2026-07-18T13:00:00Z', '2026-07-18T13:30:00Z')"), 'Jul 18, 2026, 09:00 to 09:30');
+    assert.equal(app.run("displayRange('2026-11-19T04:30:00Z', '2026-11-19T05:00:00Z')"), 'Nov 18, 2026, 23:30 to Nov 19, 2026, 00:00');
   } else throw new Error('Unknown scenario');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
