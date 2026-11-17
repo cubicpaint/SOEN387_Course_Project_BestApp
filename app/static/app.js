@@ -280,7 +280,7 @@ async function login(event) {
     ui.identity.textContent = `Signed in: ${ui.email.value} (${user.role}).`;
     ui["account-status"].textContent = customer()
       ? "You can book appointments and view your upcoming visits."
-      : "You can view schedules and appointments for your assigned barbers below.";
+      : "This is a staff account. You can view schedules and appointments for your assigned barbers below.";
     ui.appointments.replaceChildren();
     if (pendingForUser()) {
       ui["booking-status"].textContent = "A previous booking needs a definite result. Retry the same booking before choosing a new one.";
@@ -742,7 +742,7 @@ async function book() {
     selected = null;
     clearSelection();
     ui["booking-status"].textContent = result.status === 201
-      ? `Appointment confirmed: ${result.body.id}.`
+      ? `Appointment confirmed: ${result.body.id} (original booking result). The current list below includes any later changes.`
       : `${safeMessage(result)} Choose a new available time for a new booking attempt.`;
     await Promise.allSettled([loadAppointments(), loadAvailability()]);
   } catch {
