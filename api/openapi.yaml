@@ -64,6 +64,7 @@ tags:
   - name: Availability
   - name: Appointments
   - name: Health
+  - name: Staff
 security:
   - bearerAuth: []
 
@@ -873,6 +874,478 @@ paths:
         '422':
           $ref: '#/components/responses/CancellationUnprocessable'
 
+  /barbers/{barberId}/appointments:
+    get:
+      operationId: listStaffAppointments
+      tags:
+      - Staff
+      summary: List upcoming appointments for an assigned barber
+      security:
+      - bearerAuth: []
+      description: Require staff role and current assignment to the path barber in the service layer,
+        including before replay. Customer accounts and unassigned staff receive forbidden. The shop staff
+        account has all-barber assignments using the same role. Reject undeclared or repeated query parameters.
+        Return confirmed appointments whose start is at or after the trusted server time, ordered by startTime
+        then ID. Expose scheduling fields and customerEmail, never credentials or other barbers' appointments.
+        No query filters are accepted; an empty appointments array is valid.
+      parameters:
+      - name: barberId
+        in: path
+        required: true
+        description: Barber assigned to the current staff caller.
+        schema:
+          $ref: '#/components/schemas/BarberId'
+      responses:
+        '200':
+          description: Upcoming appointments for this assigned barber
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffAppointmentListResponse'
+              example:
+                appointments:
+                - id: apt_301
+                  barberId: bar_101
+                  service: both
+                  durationMinutes: 60
+                  startTime: '2030-01-15T15:00:00Z'
+                  endTime: '2030-01-15T16:00:00Z'
+                  status: confirmed
+                  createdAt: '2030-01-10T18:00:00Z'
+                  customerEmail: customer@example.test
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/BarberNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /barbers/{barberId}/availability:
+    get:
+      operationId: getStaffAvailability
+      tags:
+      - Staff
+      summary: Read configured availability for one assigned barber and Toronto date
+      security:
+      - bearerAuth: []
+      description: Require staff role and current assignment to the path barber in the service layer,
+        including before replay. Customer accounts and unassigned staff receive forbidden. The shop staff
+        account has all-barber assignments using the same role. Reject undeclared or repeated query parameters.
+        Return enabled and disabled blocks, occupancy, normalized Toronto-offset enabled ranges, and a
+        strong revision ETag. Do not apply customer notice filtering. An unconfigured date may return
+        empty ranges and blocks; after PUT it contains every base block for that local date. Block timestamps
+        remain UTC Z; range offsets match America/Toronto.
+      parameters:
+      - name: barberId
+        in: path
+        required: true
+        description: Barber assigned to the current staff caller.
+        schema:
+          $ref: '#/components/schemas/BarberId'
+      - name: date
+        in: query
+        required: true
+        description: The complete Toronto local date being read or replaced.
+        schema:
+          $ref: '#/components/schemas/LocalDate'
+      responses:
+        '200':
+          description: Configured date and revision, including an empty unconfigured date
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            ETag:
+              required: true
+              description: Strong revision of this snapshot; successful retry returns the recorded snapshot
+                revision.
+              schema:
+                $ref: '#/components/schemas/RevisionMatch'
+              example: '"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffAvailability'
+              example:
+                barberId: bar_101
+                date: '2030-01-15'
+                timeZone: America/Toronto
+                ranges: []
+                blocks: []
+                revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/BarberNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    put:
+      operationId: replaceStaffAvailability
+      tags:
+      - Staff
+      summary: Replace an assigned barber's availability for one complete Toronto date
+      security:
+      - bearerAuth: []
+      description: Require staff role and current assignment to the path barber in the service layer,
+        including before replay. Customer accounts and unassigned staff receive forbidden. The shop staff
+        account has all-barber assignments using the same role. Reject undeclared or repeated query parameters.
+        The ranges array is the complete desired enabled schedule, not a patch. Empty ranges close the
+        date. Require positive nonoverlapping ranges with local half-hour boundaries and explicit numeric
+        offsets matching Toronto; the final endpoint may be next local midnight. Materialize all 46, 48,
+        or 50 elapsed half-hour blocks between the two local midnights. Preserve permanent identities,
+        reuse disabled blocks, create missing blocks, and disable omitted blocks. Reject the entire edit
+        with availability_occupied if any omitted block is occupied, including an appointment continuing
+        from another date. Never move or cancel appointments. Serialize staff/provisioning writers with
+        a barber lock and protect existing block writes with versions so concurrent bookings cannot be
+        erased. Require one If-Match revision and Idempotency-Key; a stale revision returns 412. Bind
+        the operation, target barber/date, normalized ranges, and precondition to the caller's key. Matching
+        completed requests replay original status/body and snapshot ETag before checking the current revision
+        or occupancy. Commit the entire edit and outcome together. Business rejection rolls back all schedule
+        changes; transient failures do not consume an unfinished key.
+      parameters:
+      - name: barberId
+        in: path
+        required: true
+        description: Barber assigned to the current staff caller.
+        schema:
+          $ref: '#/components/schemas/BarberId'
+      - name: date
+        in: query
+        required: true
+        description: The complete Toronto local date being read or replaced.
+        schema:
+          $ref: '#/components/schemas/LocalDate'
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Exactly one caller-scoped key; reuse unchanged for retries.
+        schema:
+          $ref: '#/components/schemas/IdempotencyKey'
+      - name: If-Match
+        in: header
+        required: true
+        description: Exactly one strong quoted revision from the staff date read.
+        schema:
+          $ref: '#/components/schemas/RevisionMatch'
+      responses:
+        '200':
+          description: Complete replaced date or recorded immutable result
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            ETag:
+              required: true
+              description: Strong revision of this snapshot; successful retry returns the recorded snapshot
+                revision.
+              schema:
+                $ref: '#/components/schemas/RevisionMatch'
+              example: '"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffAvailability'
+              example:
+                barberId: bar_101
+                date: '2030-01-15'
+                timeZone: America/Toronto
+                ranges: []
+                blocks:
+                - slotId: slot_closed_0
+                  startTime: '2030-01-15T05:00:00Z'
+                  endTime: '2030-01-15T05:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_1
+                  startTime: '2030-01-15T05:30:00Z'
+                  endTime: '2030-01-15T06:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_2
+                  startTime: '2030-01-15T06:00:00Z'
+                  endTime: '2030-01-15T06:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_3
+                  startTime: '2030-01-15T06:30:00Z'
+                  endTime: '2030-01-15T07:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_4
+                  startTime: '2030-01-15T07:00:00Z'
+                  endTime: '2030-01-15T07:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_5
+                  startTime: '2030-01-15T07:30:00Z'
+                  endTime: '2030-01-15T08:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_6
+                  startTime: '2030-01-15T08:00:00Z'
+                  endTime: '2030-01-15T08:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_7
+                  startTime: '2030-01-15T08:30:00Z'
+                  endTime: '2030-01-15T09:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_8
+                  startTime: '2030-01-15T09:00:00Z'
+                  endTime: '2030-01-15T09:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_9
+                  startTime: '2030-01-15T09:30:00Z'
+                  endTime: '2030-01-15T10:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_10
+                  startTime: '2030-01-15T10:00:00Z'
+                  endTime: '2030-01-15T10:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_11
+                  startTime: '2030-01-15T10:30:00Z'
+                  endTime: '2030-01-15T11:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_12
+                  startTime: '2030-01-15T11:00:00Z'
+                  endTime: '2030-01-15T11:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_13
+                  startTime: '2030-01-15T11:30:00Z'
+                  endTime: '2030-01-15T12:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_14
+                  startTime: '2030-01-15T12:00:00Z'
+                  endTime: '2030-01-15T12:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_15
+                  startTime: '2030-01-15T12:30:00Z'
+                  endTime: '2030-01-15T13:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_16
+                  startTime: '2030-01-15T13:00:00Z'
+                  endTime: '2030-01-15T13:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_17
+                  startTime: '2030-01-15T13:30:00Z'
+                  endTime: '2030-01-15T14:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_18
+                  startTime: '2030-01-15T14:00:00Z'
+                  endTime: '2030-01-15T14:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_19
+                  startTime: '2030-01-15T14:30:00Z'
+                  endTime: '2030-01-15T15:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_20
+                  startTime: '2030-01-15T15:00:00Z'
+                  endTime: '2030-01-15T15:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_21
+                  startTime: '2030-01-15T15:30:00Z'
+                  endTime: '2030-01-15T16:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_22
+                  startTime: '2030-01-15T16:00:00Z'
+                  endTime: '2030-01-15T16:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_23
+                  startTime: '2030-01-15T16:30:00Z'
+                  endTime: '2030-01-15T17:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_24
+                  startTime: '2030-01-15T17:00:00Z'
+                  endTime: '2030-01-15T17:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_25
+                  startTime: '2030-01-15T17:30:00Z'
+                  endTime: '2030-01-15T18:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_26
+                  startTime: '2030-01-15T18:00:00Z'
+                  endTime: '2030-01-15T18:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_27
+                  startTime: '2030-01-15T18:30:00Z'
+                  endTime: '2030-01-15T19:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_28
+                  startTime: '2030-01-15T19:00:00Z'
+                  endTime: '2030-01-15T19:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_29
+                  startTime: '2030-01-15T19:30:00Z'
+                  endTime: '2030-01-15T20:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_30
+                  startTime: '2030-01-15T20:00:00Z'
+                  endTime: '2030-01-15T20:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_31
+                  startTime: '2030-01-15T20:30:00Z'
+                  endTime: '2030-01-15T21:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_32
+                  startTime: '2030-01-15T21:00:00Z'
+                  endTime: '2030-01-15T21:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_33
+                  startTime: '2030-01-15T21:30:00Z'
+                  endTime: '2030-01-15T22:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_34
+                  startTime: '2030-01-15T22:00:00Z'
+                  endTime: '2030-01-15T22:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_35
+                  startTime: '2030-01-15T22:30:00Z'
+                  endTime: '2030-01-15T23:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_36
+                  startTime: '2030-01-15T23:00:00Z'
+                  endTime: '2030-01-15T23:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_37
+                  startTime: '2030-01-15T23:30:00Z'
+                  endTime: '2030-01-16T00:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_38
+                  startTime: '2030-01-16T00:00:00Z'
+                  endTime: '2030-01-16T00:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_39
+                  startTime: '2030-01-16T00:30:00Z'
+                  endTime: '2030-01-16T01:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_40
+                  startTime: '2030-01-16T01:00:00Z'
+                  endTime: '2030-01-16T01:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_41
+                  startTime: '2030-01-16T01:30:00Z'
+                  endTime: '2030-01-16T02:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_42
+                  startTime: '2030-01-16T02:00:00Z'
+                  endTime: '2030-01-16T02:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_43
+                  startTime: '2030-01-16T02:30:00Z'
+                  endTime: '2030-01-16T03:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_44
+                  startTime: '2030-01-16T03:00:00Z'
+                  endTime: '2030-01-16T03:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_45
+                  startTime: '2030-01-16T03:30:00Z'
+                  endTime: '2030-01-16T04:00:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_46
+                  startTime: '2030-01-16T04:00:00Z'
+                  endTime: '2030-01-16T04:30:00Z'
+                  enabled: false
+                  occupied: false
+                - slotId: slot_closed_47
+                  startTime: '2030-01-16T04:30:00Z'
+                  endTime: '2030-01-16T05:00:00Z'
+                  enabled: false
+                  occupied: false
+                revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/BarberNotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '400':
+          $ref: '#/components/responses/InvalidJson'
+        '409':
+          $ref: '#/components/responses/AvailabilityConflict'
+        '412':
+          $ref: '#/components/responses/StaleVersion'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvailabilityChangeRequest'
+            examples:
+              close:
+                value:
+                  ranges: []
+              ranges:
+                value:
+                  ranges:
+                  - startTime: '2030-01-15T09:00:00-05:00'
+                    endTime: '2030-01-15T17:00:00-05:00'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1175,6 +1648,8 @@ components:
     RevisionMatch:
       type: string
       pattern: ^"[0-9a-f]{64}"$
+      minLength: 66
+      maxLength: 66
       description: Strong quoted revision returned by the staff date read.
       examples:
       - '"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
@@ -1255,13 +1730,13 @@ components:
         startTime:
           type: string
           format: date-time
-          pattern: '[+-]\d{2}:\d{2}$'
+          pattern: '[+-][0-9]{2}:[0-9]{2}$'
           description: Explicit offset must match America/Toronto at this instant; boundaries align to :00
             or :30.
         endTime:
           type: string
           format: date-time
-          pattern: '[+-]\d{2}:\d{2}$'
+          pattern: '[+-][0-9]{2}:[0-9]{2}$'
           description: Explicit offset must match America/Toronto at this instant; boundaries align to :00
             or :30.
       examples:
@@ -1325,10 +1800,12 @@ components:
           const: America/Toronto
         ranges:
           type: array
+          maxItems: 50
           items:
             $ref: '#/components/schemas/AvailabilityRange'
         blocks:
           type: array
+          maxItems: 50
           items:
             $ref: '#/components/schemas/StaffAvailabilityBlock'
         revision:
