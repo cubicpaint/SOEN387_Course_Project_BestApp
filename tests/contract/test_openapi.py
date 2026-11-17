@@ -19,8 +19,19 @@ SUMMARY_PROPERTY = "bestapp_contract_summary"
 TEST_FILE = Path(__file__)
 OUTCOME_PRIORITY = {"PASS": 0, "SKIP": 1, "FAIL": 2}
 METHODS = {"get", "post", "put", "patch", "delete", "options", "head", "trace"}
-CUSTOMER_OPERATIONS = {("/appointments", "get"), ("/appointments", "post")}
-CONTRACT_OPERATIONS = CUSTOMER_OPERATIONS | {
+CUSTOMER_OPERATIONS = {
+    ("/appointments", "get"), ("/appointments", "post"),
+    ("/appointments/{appointmentId}", "get"),
+    ("/appointments/{appointmentId}", "put"),
+    ("/appointments/{appointmentId}", "delete"),
+    ("/appointments/{appointmentId}/availability", "get"),
+}
+STAFF_OPERATIONS = {
+    ("/barbers/{barberId}/appointments", "get"),
+    ("/barbers/{barberId}/availability", "get"),
+    ("/barbers/{barberId}/availability", "put"),
+}
+CONTRACT_OPERATIONS = CUSTOMER_OPERATIONS | STAFF_OPERATIONS | {
     ("/auth/login", "post"),
     ("/barbers", "get"),
     ("/availability", "get"),
@@ -160,7 +171,7 @@ def test_only_documented_operations_and_explicit_permissions_are_declared(spec):
     actual = {(path, method) for path, method, _ in operations(spec)}
     assert actual == CONTRACT_OPERATIONS
     for path, method, operation in operations(spec):
-        expected = [{"bearerAuth": []}] if (path, method) in CUSTOMER_OPERATIONS else []
+        expected = [{"bearerAuth": []}] if (path, method) in CUSTOMER_OPERATIONS | STAFF_OPERATIONS else []
         assert operation["security"] == expected, f"{method} {path}"
     assert spec["components"]["securitySchemes"]["bearerAuth"]["scheme"] == "bearer"
     assert "503" in spec["paths"]["/health/ready"]["get"]["responses"]
