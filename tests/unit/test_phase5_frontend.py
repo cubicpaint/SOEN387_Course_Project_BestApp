@@ -174,8 +174,8 @@ async function main() {
     await loadSchedule(app);
     assert.equal(app.nodes.get('staff-barber').children.length,1);
     assert.equal(app.nodes.get('staff-editor').disabled,false);
-    assert.equal(app.run('staffRangeRows[0].start.value'),'2030-01-15T10:00:00-05:00');
-    assert.equal(app.run('staffRangeRows[0].end.value'),'2030-01-15T11:00:00-05:00');
+    assert.equal(app.run('staffRangeRows[0].start.value'),'2030-01-15 10:00');
+    assert.equal(app.run('staffRangeRows[0].end.value'),'2030-01-15 11:00');
     app.queue.push(response(503,{error:{message:'Unavailable'}})); await app.run('saveStaffAvailability()');
     const mutation = app.calls.find(call => call.options.method === 'PUT');
     assert.equal(mutation.options.headers['If-Match'],`"${revision}"`);
@@ -225,12 +225,17 @@ async function main() {
     await app.run('loadStaffAvailability()'); await app.run('loadStaffAppointments()');
     assert.equal(app.calls.length,count);
     assert.match(app.nodes.get('staff-availability-status').textContent,/No barbers/);
-  } else if (scenario === 'staff_missing_offset') {
-    await loadSchedule(app); app.run("staffRangeRows[0].start.value = '2030-01-15T10:00:00'");
-    const count = app.calls.length; await app.run('saveStaffAvailability()');
-    assert.equal(app.calls.length,count);
-    assert.equal(app.run('pendingChanges.size'),0);
-    assert.match(app.nodes.get('staff-availability-status').textContent,/explicit offset/);
+  } else if (scenario === 'staff_invalid_local_time') {
+    await loadSchedule(app);
+    const count = app.calls.length;
+    for (const value of ['', '2030-02-30 10:00', '2030-01-15 25:00', '2026-03-08 02:30', '2030-01-15T10:00:00-05:00']) {
+      app.context.invalidTime = value;
+      app.run('staffRangeRows[0].start.value = invalidTime;');
+      await app.run('saveStaffAvailability()');
+      assert.equal(app.calls.length,count);
+      assert.equal(app.run('pendingChanges.size'),0);
+      assert.match(app.nodes.get('staff-availability-status').textContent,/valid local dates and times/);
+    }
   } else if (scenario === 'staff_dst_offsets') {
     assert.equal(app.run("torontoTimestamp('2026-11-01T05:00:00Z')"),'2026-11-01T01:00:00-04:00');
     assert.equal(app.run("torontoTimestamp('2026-11-01T06:00:00Z')"),'2026-11-01T01:00:00-05:00');
@@ -288,7 +293,7 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
     "change_restore", "change_blocks_booking", "reject_unsafe_restore", "time_only_choices", "reschedule_retry",
     "cancel_restore", "expired_change", "management_account_race", "mutation_account_race", "replacement_race", "stale_change",
     "staff_editor", "staff_close_retry", "staff_occupied_rejection", "staff_selection_race", "staff_list_account_race",
-    "staff_unassigned", "staff_missing_offset", "staff_dst_offsets",
+    "staff_unassigned", "staff_invalid_local_time", "staff_dst_offsets",
     "missing_restored_key", "unrelated_success", "wrong_cancel_state", "wrong_staff_target", "revoked_permission",
     "logout_clears_summary",
 ])

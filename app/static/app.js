@@ -612,12 +612,12 @@ function addStaffRange(startTime = "", endTime = "") {
   const number = ++staffRangeSequence;
   const row = document.createElement("div"); row.className = "range-row";
   const fields = document.createElement("div"); fields.className = "fields";
-  const start = document.createElement("input"); start.id = `range-start-${number}`; start.type = "text"; start.maxLength = 40; start.value = startTime;
-  const end = document.createElement("input"); end.id = `range-end-${number}`; end.type = "text"; end.maxLength = 40; end.value = endTime;
-  const startLabel = document.createElement("label"); startLabel.htmlFor = start.id; startLabel.textContent = "Range start (with offset)"; startLabel.append(start);
-  const endLabel = document.createElement("label"); endLabel.htmlFor = end.id; endLabel.textContent = "Range end (with offset)"; endLabel.append(end);
+  const start = document.createElement("input"); start.id = `range-start-${number}`; start.type = "text"; start.maxLength = 16; start.placeholder = "YYYY-MM-DD HH:mm"; start.value = startTime ? staffRangeValue(startTime) : "";
+  const end = document.createElement("input"); end.id = `range-end-${number}`; end.type = "text"; end.maxLength = 16; end.placeholder = "YYYY-MM-DD HH:mm"; end.value = endTime ? staffRangeValue(endTime) : "";
+  const startLabel = document.createElement("label"); startLabel.htmlFor = start.id; startLabel.textContent = "Range start"; startLabel.append(start);
+  const endLabel = document.createElement("label"); endLabel.htmlFor = end.id; endLabel.textContent = "Range end"; endLabel.append(end);
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "secondary"; remove.textContent = "Remove range";
-  const entry = { node: row, start, end };
+  const entry = { node: row, start, end, originalStart: startTime, originalEnd: endTime };
   remove.addEventListener("click", () => {
     staffRangeRows = staffRangeRows.filter(existing => existing !== entry);
     ui["staff-ranges"].replaceChildren(...staffRangeRows.map(existing => existing.node));
@@ -666,7 +666,7 @@ async function loadStaffAvailability(event) {
     for (const range of result.body.ranges) {
       const item = document.createElement("li"); item.textContent = displayRange(range.startTime, range.endTime);
       ui["staff-configured"].append(item);
-      addStaffRange(torontoTimestamp(range.startTime), torontoTimestamp(range.endTime));
+      addStaffRange(range.startTime, range.endTime);
     }
     if (result.body.ranges.length === 0) {
       const item = document.createElement("li"); item.textContent = "No available ranges are configured for this date.";
@@ -685,12 +685,13 @@ async function loadStaffAvailability(event) {
 function saveStaffAvailability() {
   if (!staff() || !staffRevision || hasPendingIntent() || mutationBusy ||
       staffRevision.barberId !== ui["staff-barber"].value || staffRevision.date !== ui["staff-date"].value) return;
-  const ranges = ui["staff-close-date"].checked ? [] : staffRangeRows.map(entry => ({ startTime: entry.start.value, endTime: entry.end.value }));
-  const offsetTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?[+-]\d{2}:\d{2}$/;
+  const ranges = ui["staff-close-date"].checked ? [] : staffRangeRows.map(entry => ({
+    startTime: staffRangeTimestamp(entry.start.value, entry.originalStart),
+    endTime: staffRangeTimestamp(entry.end.value, entry.originalEnd),
+  }));
   if ((!ui["staff-close-date"].checked && ranges.length === 0) || ranges.some(range =>
-      !offsetTime.test(range.startTime) || !offsetTime.test(range.endTime) ||
-      Number.isNaN(Date.parse(range.startTime)) || Number.isNaN(Date.parse(range.endTime)))) {
-    ui["staff-availability-status"].textContent = "Complete each range using a timestamp with an explicit offset, or select Close this date.";
+      !range.startTime || !range.endTime)) {
+    ui["staff-availability-status"].textContent = "Complete each range using valid local dates and times in YYYY-MM-DD HH:mm format, or select Close this date.";
     return;
   }
   const query = new URLSearchParams({ date: staffRevision.date });
