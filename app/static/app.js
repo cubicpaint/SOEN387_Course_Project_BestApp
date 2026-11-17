@@ -588,6 +588,10 @@ function torontoTimestamp(value) {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${parts.timeZoneName.replace("GMT", "")}`;
 }
 
+function staffRangeValue(value) {
+  return torontoTimestamp(value).slice(0, 16).replace("T", " ");
+}
+
 function addStaffRange(startTime = "", endTime = "") {
   const number = ++staffRangeSequence;
   const row = document.createElement("div"); row.className = "range-row";
