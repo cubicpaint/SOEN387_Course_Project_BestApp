@@ -644,7 +644,7 @@ async function loadStaffAvailability(event) {
     ui["staff-configured"].replaceChildren();
     ui["staff-close-date"].checked = result.body.ranges.length === 0;
     for (const range of result.body.ranges) {
-      const item = document.createElement("li"); item.textContent = `${displayTime(range.startTime)} to ${displayTime(range.endTime)}`;
+      const item = document.createElement("li"); item.textContent = displayRange(range.startTime, range.endTime);
       ui["staff-configured"].append(item);
       addStaffRange(torontoTimestamp(range.startTime), torontoTimestamp(range.endTime));
     }
