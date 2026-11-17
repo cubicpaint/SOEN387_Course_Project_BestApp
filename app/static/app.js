@@ -6,11 +6,19 @@ const ui = Object.fromEntries([
   "availability-form", "browse-fields", "barber", "service", "date", "availability-button", "availability-status",
   "slot-options", "slots", "selection", "book-button", "retry-button", "booking-status",
   "appointments-button", "appointments-status", "appointments",
+  "management-section", "management-summary", "change-availability-form", "change-date", "change-availability-button",
+  "change-availability-status", "change-slot-options", "change-slots", "change-confirm", "reschedule-button",
+  "cancel-appointment-button", "close-management-button", "change-result-section", "change-status", "change-retry-button",
+  "staff-section", "staff-availability-form", "staff-barber", "staff-date", "staff-load-button", "staff-editor",
+  "staff-availability-status", "staff-configured", "staff-ranges", "staff-add-range-button", "staff-close-date",
+  "staff-save-button", "staff-appointments-button", "staff-appointments-status", "staff-appointments",
 ].map((id) => [id, element(id)]));
 const services = { haircut: "Haircut", beard: "Beard", both: "Haircut and beard" };
 const barberNames = new Map();
 const pendingBookings = new Map();
+const pendingChanges = new Map();
 const storageKey = "bestapp.pendingBookings";
+const changeStorageKey = "bestapp.pendingChanges";
 const timeFormat = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Toronto", year: "numeric", month: "short", day: "numeric",
   hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "longOffset",
@@ -26,6 +34,56 @@ let bookingAttempt = 0;
 let bookingBusy = false;
 let availabilityBusy = false;
 let storageAvailable = true;
+let management = null;
+let changeSelected = null;
+let mutationBusy = false;
+let mutationAttempt = 0;
+let managementAttempt = 0;
+let changeAvailabilityAttempt = 0;
+let staffAvailabilityAttempt = 0;
+let staffAppointmentsAttempt = 0;
+let staffRevision = null;
+let staffRangeRows = [];
+let staffRangeSequence = 0;
+
+function validChangeIntent(pending) {
+  if (!pending || !/^usr_[A-Za-z0-9_-]{1,60}$/.test(pending.userId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(pending.key) ||
+      typeof pending.summary !== "string" || pending.summary.length > 500 ||
+      typeof pending.ifMatch !== "string") return false;
+  const appointmentPath = /^\/appointments\/apt_[A-Za-z0-9_-]{1,60}$/;
+  if (pending.kind === "cancel") return pending.method === "DELETE" && appointmentPath.test(pending.path) &&
+    /^"[1-9][0-9]*"$/.test(pending.ifMatch) && pending.body === null;
+  if (pending.kind === "reschedule") return pending.method === "PUT" && appointmentPath.test(pending.path) &&
+    /^"[1-9][0-9]*"$/.test(pending.ifMatch) && pending.body && Object.keys(pending.body).length === 1 &&
+    /^slot_[A-Za-z0-9_-]{1,59}$/.test(pending.body.slotId);
+  return pending.kind === "availability" && pending.method === "PUT" &&
+    /^\/barbers\/bar_[A-Za-z0-9_-]{1,60}\/availability\?date=[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(pending.path) &&
+    /^"[a-f0-9]{64}"$/.test(pending.ifMatch) && pending.body && Object.keys(pending.body).length === 1 &&
+    Array.isArray(pending.body.ranges) && pending.body.ranges.length <= 50 && pending.body.ranges.every(range =>
+      range && Object.keys(range).length === 2 && typeof range.startTime === "string" &&
+      typeof range.endTime === "string" && range.startTime.length <= 40 && range.endTime.length <= 40);
+}
+
+function restorePendingChanges() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(changeStorageKey) || "[]");
+    if (Array.isArray(saved)) for (const pending of saved) {
+      if (validChangeIntent(pending)) pendingChanges.set(pending.userId, pending);
+    }
+  } catch { storageAvailable = false; }
+}
+
+function savePendingChanges() {
+  try { sessionStorage.setItem(changeStorageKey, JSON.stringify([...pendingChanges.values()])); }
+  catch { storageAvailable = false; }
+}
+
+function pendingChangeForUser() { return user ? pendingChanges.get(user.id) : undefined; }
+
+function staff() { return Boolean(token && user && user.role === "staff"); }
+
+function hasPendingIntent() { return Boolean(pendingForUser() || pendingChangeForUser()); }
 
 function restorePendingBookings() {
   try {
@@ -74,14 +132,26 @@ function summary(slot, service, barberName) {
 
 function updateControls() {
   const pending = pendingForUser();
-  ui["browse-fields"].disabled = Boolean(pending);
+  const change = pendingChangeForUser();
+  const blocked = Boolean(pending || change);
+  ui["browse-fields"].disabled = blocked;
   ui["availability-button"].disabled = availabilityBusy || barberNames.size === 0;
-  ui["slot-options"].disabled = Boolean(pending);
-  ui["book-button"].disabled = !customer() || !selected || Boolean(pending) || bookingBusy;
+  ui["slot-options"].disabled = blocked;
+  ui["book-button"].disabled = !customer() || !selected || blocked || bookingBusy;
   ui["book-button"].hidden = Boolean(pending);
   ui["retry-button"].hidden = !pending;
   ui["retry-button"].disabled = !customer() || bookingBusy;
   ui["appointments-button"].disabled = !customer();
+  ui["change-result-section"].hidden = !user;
+  ui["change-retry-button"].hidden = !change;
+  ui["change-retry-button"].disabled = !user || mutationBusy;
+  ui["change-availability-button"].disabled = !customer() || !management || blocked || mutationBusy;
+  ui["change-slot-options"].disabled = blocked || mutationBusy;
+  ui["reschedule-button"].disabled = !customer() || !management || !changeSelected || blocked || mutationBusy || !ui["change-confirm"].checked;
+  ui["cancel-appointment-button"].disabled = !customer() || !management || blocked || mutationBusy || !ui["change-confirm"].checked;
+  ui["staff-load-button"].disabled = !staff() || mutationBusy;
+  ui["staff-editor"].disabled = !staff() || !staffRevision || blocked || mutationBusy;
+  ui["staff-appointments-button"].disabled = !staff();
   if (pending) ui.selection.textContent = `Pending booking: ${pending.summary}`;
   else ui.selection.textContent = selected ? selected.summary : "Select an available starting time above.";
 }
@@ -100,7 +170,8 @@ async function request(path, options = {}) {
     const response = await fetch(path, { ...options, signal: controller.signal, cache: "no-store" });
     let body;
     try { body = await response.json(); } catch { body = null; }
-    return { status: response.status, ok: response.ok, body };
+    const etag = response.headers && typeof response.headers.get === "function" ? response.headers.get("ETag") : null;
+    return { status: response.status, ok: response.ok, body, etag };
   } finally {
     clearTimeout(timeout);
   }
@@ -204,7 +275,7 @@ async function loadBarbers() {
 
 async function loadAvailability(event) {
   if (event) event.preventDefault();
-  if (pendingForUser() || !ui.barber.value || !ui.date.value) return;
+  if (hasPendingIntent() || !ui.barber.value || !ui.date.value) return;
   const attempt = ++availabilityAttempt;
   const epoch = authEpoch;
   const service = ui.service.value;
@@ -288,7 +359,7 @@ async function loadAppointments() {
 }
 
 async function book() {
-  if (!customer() || bookingBusy) return;
+  if (!customer() || bookingBusy || pendingChangeForUser()) return;
   let pending = pendingForUser();
   if (!pending) {
     if (!selected) return;
@@ -364,5 +435,6 @@ const today = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
 }).formatToParts(new Date()).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
 ui.date.value = new Date(Date.UTC(Number(today.year), Number(today.month) - 1, Number(today.day) + 1)).toISOString().slice(0, 10);
 restorePendingBookings();
+restorePendingChanges();
 updateControls();
 loadBarbers();
