@@ -80,3 +80,36 @@ def test_staff_availability_keeps_timezone_and_occupancy_explicit(document):
     assert {"blocks", "ranges", "revision"} <= set(schema["required"])
     block = document["components"]["schemas"]["StaffAvailabilityBlock"]
     assert {"enabled", "occupied", "slotId"} <= set(block["required"])
+
+
+@pytest.mark.parametrize("method", ["get", "put", "delete"])
+def test_management_operations_require_authentication(document, method):
+    operation = document["paths"]["/appointments/{appointmentId}"][method]
+    assert operation["security"] == [{"bearerAuth": []}]
+    assert {"401", "403", "404", "422", "500", "503"} <= set(operation["responses"])
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ManagedAppointment",
+    }
+
+
+@pytest.mark.parametrize("method", ["put", "delete"])
+def test_management_mutations_bind_keys_to_versioned_intents(document, method):
+    operation = document["paths"]["/appointments/{appointmentId}"][method]
+    headers = {parameter["name"]: parameter for parameter in operation["parameters"] if parameter["in"] == "header"}
+    assert set(headers) == {"If-Match", "Idempotency-Key"}
+    assert all(header["required"] for header in headers.values())
+    assert headers["If-Match"]["schema"] == {"$ref": "#/components/schemas/VersionMatch"}
+    assert "412" in operation["responses"]
+    assert operation["responses"]["200"]["headers"]["ETag"]["required"] is True
+
+
+def test_replacement_browsing_cannot_choose_another_barber_or_service(document):
+    operation = document["paths"]["/appointments/{appointmentId}/availability"]["get"]
+    assert operation["security"] == [{"bearerAuth": []}]
+    assert [parameter["name"] for parameter in operation["parameters"] if parameter["in"] == "query"] == ["date"]
+    assert "own allocations" in operation["description"]
+    assert "no barberId or service" in operation["description"]
+
+
+def test_cancellation_does_not_advertise_a_request_body(document):
+    assert "requestBody" not in document["paths"]["/appointments/{appointmentId}"]["delete"]
