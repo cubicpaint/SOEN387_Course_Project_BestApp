@@ -56,7 +56,7 @@
     <section aria-labelledby="booking-heading">
       <h2 id="booking-heading">3. Confirm your booking</h2>
       <p id="selection">Select an available starting time above.</p>
-      <p class="notice" id="change-restriction"><strong>Before you confirm:</strong> online cancellation or rescheduling requires at least 24 hours before the appointment starts. If you book less than 24 hours ahead, you cannot later cancel or reschedule it online. Online changes are not available in this interface.</p>
+      <p class="notice" id="change-restriction"><strong>Before you confirm:</strong> online cancellation or rescheduling requires at least 24 hours before the appointment starts. If you book less than 24 hours ahead, you cannot later cancel or reschedule it online.</p>
       <button id="book-button" type="button" disabled>Confirm booking</button>
       <button id="retry-button" type="button" hidden>Retry the same booking</button>
       <p id="booking-status" role="status" aria-live="polite"></p>
@@ -67,6 +67,62 @@
       <button id="appointments-button" type="button" class="secondary" disabled>Refresh appointments</button>
       <p id="appointments-status" role="status" aria-live="polite">Log in as a customer to view your appointments.</p>
       <ul id="appointments" class="appointments"></ul>
+    </section>
+
+    <section id="management-section" aria-labelledby="management-heading" hidden>
+      <h2 id="management-heading">Change an appointment</h2>
+      <p id="management-summary"></p>
+      <p>The barber and service stay the same. The server checks the 24-hour cutoff when you confirm a change. Replacement times require at least two hours' notice.</p>
+      <form id="change-availability-form">
+        <div class="fields">
+          <label for="change-date">Replacement Toronto date<input id="change-date" type="date" required></label>
+        </div>
+        <button id="change-availability-button" type="submit" class="secondary">Find replacement times</button>
+      </form>
+      <p id="change-availability-status" role="status" aria-live="polite"></p>
+      <fieldset id="change-slot-options" hidden>
+        <legend>Replacement starting time</legend>
+        <div id="change-slots" class="slots"></div>
+      </fieldset>
+      <p class="notice">A replacement less than 24 hours ahead cannot later be cancelled or rescheduled online.</p>
+      <label class="confirmation" for="change-confirm"><input id="change-confirm" type="checkbox"> I have reviewed the appointment and the change cutoff.</label>
+      <div class="actions">
+        <button id="reschedule-button" type="button" disabled>Confirm new time</button>
+        <button id="cancel-appointment-button" type="button" class="secondary" disabled>Cancel appointment</button>
+        <button id="close-management-button" type="button" class="secondary">Close</button>
+      </div>
+    </section>
+
+    <section id="staff-section" aria-labelledby="staff-heading" hidden>
+      <h2 id="staff-heading">Staff schedule</h2>
+      <p>View upcoming appointments and manage dated availability for your assigned barbers.</p>
+      <form id="staff-availability-form">
+        <div class="fields">
+          <label for="staff-barber">Assigned barber<select id="staff-barber" required></select></label>
+          <label for="staff-date">Toronto date<input id="staff-date" type="date" required></label>
+        </div>
+        <button id="staff-load-button" type="submit" class="secondary">Load this date</button>
+        <button id="staff-appointments-button" type="button" class="secondary">View upcoming appointments</button>
+      </form>
+      <p id="staff-availability-status" role="status" aria-live="polite"></p>
+      <ul id="staff-configured" class="appointments"></ul>
+      <fieldset id="staff-editor" disabled>
+        <legend>Replace this date's available ranges</legend>
+        <p>Use Toronto timestamps with an explicit offset, for example <code>2026-11-20T09:00:00-05:00</code>. Summer times use <code>-04:00</code>. Start and end times must fall on the hour or half-hour.</p>
+        <div id="staff-ranges"></div>
+        <button id="staff-add-range-button" type="button" class="secondary">Add range</button>
+        <label class="confirmation" for="staff-close-date"><input id="staff-close-date" type="checkbox"> Close this date instead of using ranges.</label>
+        <p class="notice">Saving replaces the entire date. An edit that removes any occupied block is rejected in full.</p>
+        <button id="staff-save-button" type="button">Save availability</button>
+      </fieldset>
+      <p id="staff-appointments-status" role="status" aria-live="polite"></p>
+      <ul id="staff-appointments" class="appointments"></ul>
+    </section>
+
+    <section id="change-result-section" aria-labelledby="change-result-heading" hidden>
+      <h2 id="change-result-heading">Appointment and schedule changes</h2>
+      <p id="change-status" role="status" aria-live="polite"></p>
+      <button id="change-retry-button" type="button" hidden>Retry the same change</button>
     </section>
   </main>
   <footer>BestApp · One barbershop, three service choices.</footer>
