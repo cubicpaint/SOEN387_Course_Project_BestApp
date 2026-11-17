@@ -105,12 +105,18 @@ class AppointmentService:
     def cancel(self, caller: Caller | None, appointment_id: str, *, expected_version: int, key: str) -> BookingOutcome:
         return self._change(caller, appointment_id, expected_version=expected_version, key=key)
 
+    def reschedule(
+        self, caller: Caller | None, appointment_id: str, *, slot_id: str, expected_version: int, key: str
+    ) -> BookingOutcome:
+        return self._change(caller, appointment_id, expected_version=expected_version, key=key, slot_id=slot_id)
+
     def _change(
-        self, caller: Caller | None, appointment_id: str, *, expected_version: int, key: str
+        self, caller: Caller | None, appointment_id: str, *, expected_version: int, key: str, slot_id: str | None = None
     ) -> BookingOutcome:
         customer = require_customer(caller)
-        operation = "DELETE /appointments/{appointmentId}"
-        fingerprint = request_fingerprint(operation, appointment_id, {}, f'"{expected_version}"')
+        operation = ("DELETE" if slot_id is None else "PUT") + " /appointments/{appointmentId}"
+        content = {} if slot_id is None else {"slotId": slot_id}
+        fingerprint = request_fingerprint(operation, appointment_id, content, f'"{expected_version}"')
         try:
             with self.session_factory() as session, session.begin():
                 repository = AppointmentRepository(session)
@@ -124,7 +130,7 @@ class AppointmentService:
                     return BookingOutcome(stored.response_status, deepcopy(stored.response_body))
                 try:
                     with session.begin_nested():
-                        outcome = self._decide_change(repository, customer, appointment_id, expected_version)
+                        outcome = self._decide_change(repository, customer, appointment_id, expected_version, slot_id)
                 except _BusinessRejection as error:
                     outcome = deepcopy(error.outcome)
                 except IntegrityError as error:
@@ -142,7 +148,10 @@ class AppointmentService:
                 raise ServiceUnavailable() from None
             raise
 
-    def _decide_change(self, repository: AppointmentRepository, customer: Caller, appointment_id: str, expected_version: int):
+    def _decide_change(
+        self, repository: AppointmentRepository, customer: Caller, appointment_id: str,
+        expected_version: int, slot_id: str | None,
+    ):
         appointment = self._owned(repository, customer, appointment_id, lock=True)
         if appointment.version != expected_version:
             raise _BusinessRejection(STALE_VERSION)
@@ -151,14 +160,38 @@ class AppointmentService:
         original = repository.allocated_blocks(appointment_id)
         if len(original) != service_duration_minutes(ServiceChoice(appointment.service)) // 30:
             raise RuntimeError("The confirmed appointment does not have its complete allocation.")
-        for block in original:
-            if not repository.protect_change_block(block, appointment_id, owned=True, required=False):
+        destination = None
+        if slot_id is not None:
+            starting = repository.starting_block(slot_id)
+            if starting is None:
+                raise _BusinessRejection(SLOT_NOT_FOUND)
+            if starting.barber_id != appointment.barber_id:
+                raise _BusinessRejection(BARBER_CHANGE)
+            try:
+                ends_at = starting.starts_at.astimezone(UTC) + timedelta(minutes=service_duration_minutes(ServiceChoice(appointment.service)))
+            except OverflowError:
+                raise _BusinessRejection(SLOT_UNAVAILABLE) from None
+            candidates = repository.interval_blocks(appointment.barber_id, starting.starts_at, ends_at)
+            destination = complete_booking_blocks(starting, candidates, ServiceChoice(appointment.service))
+            if destination is None:
+                raise _BusinessRejection(SLOT_UNAVAILABLE)
+        old_ids = {block.id for block in original}
+        new_ids = {block.id for block in destination} if destination else set()
+        union = {block.id: block for block in original}
+        union.update({block.id: block for block in destination or ()})
+        for block in sorted(union.values(), key=lambda value: (value.barber_id, value.starts_at, value.id)):
+            if not repository.protect_change_block(block, appointment_id, owned=block.id in old_ids, required=block.id in new_ids):
                 raise _BusinessRejection(SLOT_UNAVAILABLE)
         decision_time = self.clock()
         if not change_notice_satisfied(appointment.starts_at, decision_time):
             raise _BusinessRejection(CHANGE_CUTOFF)
-        repository.change_allocations(appointment_id, {block.id for block in original}, set())
-        if not repository.update_appointment(appointment, expected_version, None):
+        if destination:
+            if not booking_notice_satisfied(destination[0].starts_at, decision_time):
+                raise _BusinessRejection(NOTICE_VIOLATION)
+            if repository.customer_overlaps(customer.id, destination[0].starts_at, destination[-1].ends_at, exclude_id=appointment_id):
+                raise _BusinessRejection(CUSTOMER_OVERLAP)
+        repository.change_allocations(appointment_id, old_ids, new_ids)
+        if not repository.update_appointment(appointment, expected_version, destination):
             raise _BusinessRejection(STALE_VERSION)
         return BookingOutcome(200, repository.management_snapshot(appointment))
 
