@@ -404,7 +404,7 @@ async function loadAppointments() {
       const title = document.createElement("strong");
       title.textContent = `${services[appointment.service]} · ${appointment.durationMinutes} minutes`;
       const detail = document.createElement("span");
-      detail.textContent = `${barberNames.get(appointment.barberId) || appointment.barberId} · ${displayTime(appointment.startTime)} to ${displayTime(appointment.endTime)}`;
+      detail.textContent = `${barberNames.get(appointment.barberId) || appointment.barberId} · ${displayRange(appointment.startTime, appointment.endTime)}`;
       const reference = document.createElement("small");
       reference.textContent = `Confirmed · ${appointment.id}`;
       item.append(title, detail, reference);
