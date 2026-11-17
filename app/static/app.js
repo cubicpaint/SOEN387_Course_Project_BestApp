@@ -184,6 +184,46 @@ function clearSelection() {
   updateControls();
 }
 
+function resetAccountViews() {
+  managementAttempt += 1;
+  changeAvailabilityAttempt += 1;
+  staffAvailabilityAttempt += 1;
+  staffAppointmentsAttempt += 1;
+  mutationAttempt += 1;
+  management = null;
+  changeSelected = null;
+  mutationBusy = false;
+  staffRevision = null;
+  staffRangeRows = [];
+  ui["management-section"].hidden = true;
+  ui["staff-section"].hidden = true;
+  ui["change-confirm"].checked = false;
+  ui["change-slots"].replaceChildren();
+  ui["change-slot-options"].hidden = true;
+  ui["change-status"].textContent = "";
+  ui["staff-configured"].replaceChildren();
+  ui["staff-ranges"].replaceChildren();
+  ui["staff-appointments"].replaceChildren();
+  ui["staff-availability-status"].textContent = "";
+  ui["staff-appointments-status"].textContent = "";
+}
+
+function configureStaffBarbers() {
+  const previous = ui["staff-barber"].value;
+  ui["staff-barber"].replaceChildren();
+  const assigned = staff() && Array.isArray(user.managedBarberIds) ? user.managedBarberIds : [];
+  for (const barberId of assigned) {
+    const option = document.createElement("option");
+    option.value = barberId;
+    option.textContent = barberNames.get(barberId) || barberId;
+    ui["staff-barber"].append(option);
+  }
+  if (assigned.includes(previous)) ui["staff-barber"].value = previous;
+  else ui["staff-barber"].value = assigned[0] || "";
+  ui["staff-section"].hidden = !staff();
+  if (staff() && assigned.length === 0) ui["staff-availability-status"].textContent = "No barbers are assigned to this staff account.";
+}
+
 function signOut(message = "Logged out. Log in as a customer to book or view appointments.") {
   authEpoch += 1;
   loginAttempt += 1;
@@ -203,6 +243,7 @@ function signOut(message = "Logged out. Log in as a customer to book or view app
   ui["booking-status"].textContent = "";
   ui["appointments-status"].textContent = "Log in as a customer to view your appointments.";
   ui.appointments.replaceChildren();
+  resetAccountViews();
   clearSelection();
 }
 
@@ -222,6 +263,7 @@ async function login(event) {
     }
     if (!result.body || typeof result.body.accessToken !== "string" || !result.body.user) throw new Error("Invalid login response");
     authEpoch += 1;
+    resetAccountViews();
     availabilityAttempt += 1;
     appointmentsAttempt += 1;
     bookingAttempt += 1;
@@ -235,11 +277,13 @@ async function login(event) {
     ui.identity.textContent = `Signed in: ${ui.email.value} (${user.role}).`;
     ui["account-status"].textContent = customer()
       ? "You can book appointments and view your upcoming visits."
-      : "This is a staff account. Booking and viewing personal appointments require a customer account.";
+      : "You can view schedules and appointments for your assigned barbers below.";
     ui.appointments.replaceChildren();
     if (pendingForUser()) {
       ui["booking-status"].textContent = "A previous booking needs a definite result. Retry the same booking before choosing a new one.";
     } else ui["booking-status"].textContent = "";
+    if (pendingChangeForUser()) ui["change-status"].textContent = "A previous change needs a definite result. Retry that same change before starting another.";
+    configureStaffBarbers();
     updateControls();
     if (customer()) await loadAppointments();
     else ui["appointments-status"].textContent = "Personal appointment listing is available to customers only.";
@@ -269,6 +313,7 @@ async function loadBarbers() {
   } catch {
     ui["availability-status"].textContent = "Barbers could not be loaded. Refresh the page to try again.";
   } finally {
+    configureStaffBarbers();
     updateControls();
   }
 }
@@ -350,11 +395,172 @@ async function loadAppointments() {
       const reference = document.createElement("small");
       reference.textContent = `Confirmed · ${appointment.id}`;
       item.append(title, detail, reference);
+      const manage = document.createElement("button");
+      manage.type = "button";
+      manage.className = "secondary";
+      manage.textContent = "Reschedule or cancel";
+      manage.disabled = hasPendingIntent();
+      manage.addEventListener("click", () => openAppointment(appointment.id));
+      item.append(manage);
       ui.appointments.append(item);
     }
     ui["appointments-status"].textContent = result.body.appointments.length ? "Your confirmed upcoming appointments:" : "You have no upcoming confirmed appointments.";
   } catch {
     if (attempt === appointmentsAttempt && epoch === authEpoch) ui["appointments-status"].textContent = "Appointments could not be loaded. Try refreshing them.";
+  }
+}
+
+function torontoDate(value) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(value)).filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function closeManagement() {
+  managementAttempt += 1;
+  changeAvailabilityAttempt += 1;
+  management = null;
+  changeSelected = null;
+  ui["management-section"].hidden = true;
+  ui["change-confirm"].checked = false;
+  ui["change-slots"].replaceChildren();
+  ui["change-slot-options"].hidden = true;
+  updateControls();
+}
+
+async function openAppointment(appointmentId) {
+  if (!customer() || hasPendingIntent()) return;
+  closeManagement();
+  const attempt = ++managementAttempt;
+  const epoch = authEpoch;
+  ui["change-status"].textContent = "Loading the current appointment...";
+  try {
+    const result = await request(`/appointments/${appointmentId}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (attempt !== managementAttempt || epoch !== authEpoch) return;
+    if (result.status === 401) { signOut("Your session expired. Log in again to manage your appointment."); return; }
+    if (!result.ok) { ui["change-status"].textContent = safeMessage(result); return; }
+    if (!result.body || result.body.id !== appointmentId || !Number.isInteger(result.body.version) ||
+        result.body.version < 1 || !/^"[1-9][0-9]*"$/.test(result.etag || "")) throw new Error("Invalid appointment response");
+    if (result.body.status !== "confirmed") {
+      ui["change-status"].textContent = "This appointment is already cancelled. Refresh your appointments.";
+      return;
+    }
+    management = { ...result.body, ifMatch: result.etag };
+    ui["management-summary"].textContent = summary(management, management.service, barberNames.get(management.barberId) || management.barberId);
+    ui["change-date"].value = torontoDate(management.startTime);
+    ui["management-section"].hidden = false;
+    ui["change-availability-status"].textContent = "Find replacement times, or review and cancel this appointment.";
+    ui["change-status"].textContent = "";
+  } catch {
+    if (attempt === managementAttempt && epoch === authEpoch) ui["change-status"].textContent = "The appointment could not be loaded. Refresh and try again.";
+  } finally {
+    if (attempt === managementAttempt && epoch === authEpoch) updateControls();
+  }
+}
+
+async function loadReplacementTimes(event) {
+  if (event) event.preventDefault();
+  if (!customer() || !management || hasPendingIntent() || !ui["change-date"].value) return;
+  const appointment = management;
+  const attempt = ++changeAvailabilityAttempt;
+  const epoch = authEpoch;
+  changeSelected = null;
+  ui["change-slots"].replaceChildren();
+  ui["change-slot-options"].hidden = true;
+  ui["change-availability-status"].textContent = "Checking replacement times...";
+  updateControls();
+  try {
+    const query = new URLSearchParams({ date: ui["change-date"].value });
+    const result = await request(`/appointments/${appointment.id}/availability?${query}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (attempt !== changeAvailabilityAttempt || epoch !== authEpoch || management !== appointment) return;
+    if (result.status === 401) { signOut("Your session expired. Log in again to manage your appointment."); return; }
+    if (!result.ok || !result.body || !Array.isArray(result.body.slots)) {
+      ui["change-availability-status"].textContent = result.ok ? "Replacement times could not be read." : safeMessage(result);
+      return;
+    }
+    const choices = result.body.slots.filter(slot => slot.slotId !== appointment.slotId);
+    for (const slot of choices) {
+      const label = document.createElement("label"); label.className = "slot";
+      const radio = document.createElement("input"); radio.type = "radio"; radio.name = "replacement-slot"; radio.value = slot.slotId;
+      const text = document.createElement("span"); text.textContent = `${displayTime(slot.startTime)} to ${displayTime(slot.endTime)}`;
+      radio.addEventListener("change", () => {
+        if (hasPendingIntent() || management !== appointment) return;
+        changeSelected = { slotId: slot.slotId, summary: summary(slot, appointment.service, barberNames.get(appointment.barberId) || appointment.barberId) };
+        updateControls();
+      });
+      label.append(radio, text); ui["change-slots"].append(label);
+    }
+    ui["change-slot-options"].hidden = choices.length === 0;
+    ui["change-availability-status"].textContent = choices.length
+      ? "Choose a replacement time. Your barber and service will stay the same."
+      : "No other eligible starting times are available on this date.";
+  } catch {
+    if (attempt === changeAvailabilityAttempt && epoch === authEpoch) ui["change-availability-status"].textContent = "Replacement times could not be loaded. Try again.";
+  }
+}
+
+function changeAppointment(kind) {
+  if (!customer() || !management || !ui["change-confirm"].checked || hasPendingIntent() || mutationBusy) return;
+  if (kind === "reschedule" && !changeSelected) return;
+  return submitChange({
+    userId: user.id, kind, method: kind === "cancel" ? "DELETE" : "PUT",
+    path: `/appointments/${management.id}`, ifMatch: management.ifMatch, key: crypto.randomUUID(),
+    body: kind === "cancel" ? null : { slotId: changeSelected.slotId },
+    summary: kind === "cancel" ? `Cancel appointment ${management.id}.` : changeSelected.summary,
+  });
+}
+
+async function submitChange(intent = null) {
+  if (!user || !token || mutationBusy || pendingForUser()) return;
+  let pending = pendingChangeForUser();
+  if (!pending) {
+    if (!validChangeIntent(intent) || intent.userId !== user.id) return;
+    pending = intent;
+    pendingChanges.set(user.id, pending);
+    savePendingChanges();
+  }
+  const epoch = authEpoch;
+  const attempt = ++mutationAttempt;
+  mutationBusy = true;
+  updateControls();
+  ui["change-status"].textContent = `Waiting for the result: ${pending.summary}`;
+  try {
+    const headers = { Authorization: `Bearer ${token}`, "Idempotency-Key": pending.key, "If-Match": pending.ifMatch };
+    if (pending.body !== null) headers["Content-Type"] = "application/json";
+    const result = await request(pending.path, {
+      method: pending.method, headers, ...(pending.body === null ? {} : { body: JSON.stringify(pending.body) }),
+    });
+    if (epoch !== authEpoch || attempt !== mutationAttempt) return;
+    const validSuccess = result.status === 200 && result.body && (pending.kind === "availability"
+      ? /^[a-f0-9]{64}$/.test(result.body.revision || "")
+      : typeof result.body.id === "string" && Number.isInteger(result.body.version));
+    if (result.status >= 500 || !result.body || (result.ok && !validSuccess)) {
+      ui["change-status"].textContent = "The change outcome is uncertain. Retry the same change with its preserved request and key.";
+      return;
+    }
+    if (result.status === 401) { signOut("Your session expired. Log in again to retry the same pending change."); return; }
+    if (result.status === 403) {
+      ui["change-status"].textContent = `${safeMessage(result)} Use this request's authorized account before retrying.`;
+      return;
+    }
+    pendingChanges.delete(pending.userId);
+    savePendingChanges();
+    closeManagement();
+    ui["change-status"].textContent = result.ok
+      ? "The change completed. Current appointments and availability are refreshed below."
+      : `${safeMessage(result)} Refresh the current record before starting a new change.`;
+    // A replay describes its historical outcome. Render fresh reads, rather
+    // than treating its snapshot as the appointment's current state.
+    if (customer()) await loadAppointments();
+    else if (staff()) await Promise.allSettled([loadStaffAvailability(), loadStaffAppointments()]);
+  } catch {
+    if (epoch === authEpoch && attempt === mutationAttempt) {
+      ui["change-status"].textContent = "The reply was not received. Retry the same change; its original request, version, and key are preserved.";
+      if (!storageAvailable) ui["change-status"].textContent += " Keep this page open until the result is resolved.";
+    }
+  } finally {
+    if (epoch === authEpoch && attempt === mutationAttempt) { mutationBusy = false; updateControls(); }
   }
 }
 
@@ -422,6 +628,20 @@ ui["availability-form"].addEventListener("submit", loadAvailability);
 ui["appointments-button"].addEventListener("click", loadAppointments);
 ui["book-button"].addEventListener("click", book);
 ui["retry-button"].addEventListener("click", book);
+ui["change-availability-form"].addEventListener("submit", loadReplacementTimes);
+ui["change-confirm"].addEventListener("change", updateControls);
+ui["reschedule-button"].addEventListener("click", () => changeAppointment("reschedule"));
+ui["cancel-appointment-button"].addEventListener("click", () => changeAppointment("cancel"));
+ui["close-management-button"].addEventListener("click", closeManagement);
+ui["change-retry-button"].addEventListener("click", () => submitChange());
+ui["change-date"].addEventListener("change", () => {
+  changeAvailabilityAttempt += 1;
+  changeSelected = null;
+  ui["change-slots"].replaceChildren();
+  ui["change-slot-options"].hidden = true;
+  ui["change-availability-status"].textContent = "Date changed. Find replacement times again.";
+  updateControls();
+});
 for (const control of [ui.barber, ui.service, ui.date]) {
   control.addEventListener("change", () => {
     availabilityAttempt += 1;
