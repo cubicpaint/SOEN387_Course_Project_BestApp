@@ -9,7 +9,7 @@ from fastapi.security import HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.identity import Caller
-from app.domain.staff_availability import AvailabilityRange, date_blocks
+from app.domain.staff_availability import AvailabilityRange, InvalidAvailability, date_blocks
 from app.domain.types import ServiceChoice
 from app.interface.appointments import AppointmentId, BookingJSONResponse, KEY_PATTERN
 from app.interface.auth import current_caller
@@ -129,7 +129,7 @@ def replace_staff_availability(
             caller, barberId, calendar_date.fromisoformat(query.date),
             tuple(AvailabilityRange(value.startTime, value.endTime) for value in body.ranges), revision=match[1:-1], key=key,
         )
-    except ValueError as error:
+    except InvalidAvailability as error:
         raise InputError(422, "validation_error", str(error)) from None
     headers = {}
     if outcome.status == 200:

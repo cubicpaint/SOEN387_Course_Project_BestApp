@@ -79,7 +79,8 @@ def test_staff_http_rejects_invalid_bearers_and_customer_role(staff_client):
 def test_staff_http_strict_timestamps_body_queries_and_headers(staff_client, session_factory):
     supplied = headers(staff_client)
     for invalid in ("2030-01-15T09:00:00", "2030-01-15T14:00:00Z", "2030-01-15 09:00:00-05:00",
-                    "2030-01-15T09:00:00-05", "2030-01-15T09:15:00-05:00", "2030-01-15T09:00:00-04:00", 1894701600):
+                    "2030-01-15T09:00:00-05", "2030-01-15T09:15:00-05:00", "2030-01-15T09:00:00-04:00", 1894701600,
+                    "0001-01-01T00:00:00+14:00", "9999-12-31T23:00:00-05:00"):
         body = deepcopy(BODY)
         body["ranges"][0]["startTime"] = invalid
         assert staff_client.put(URL, json=body, headers=supplied).status_code == 422

@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 import pytest
 
-from app.domain.staff_availability import AvailabilityRange, date_blocks, enabled_starts, normalize_ranges
+from app.domain.staff_availability import AvailabilityRange, InvalidAvailability, date_blocks, enabled_starts, normalize_ranges
 
 
 def interval(start, end):
@@ -70,3 +70,12 @@ def test_empty_ranges_close_the_date_and_last_midnight_is_permitted():
 def test_unrepresentable_calendar_endpoint_is_rejected():
     with pytest.raises(ValueError):
         date_blocks(date.max)
+
+
+@pytest.mark.parametrize("start,end", [
+    ("0001-01-01T00:00:00+14:00", "0001-01-01T00:30:00+14:00"),
+    ("9999-12-31T23:00:00-05:00", "9999-12-31T23:30:00-05:00"),
+])
+def test_extreme_timezone_conversions_are_known_input_failures(start, end):
+    with pytest.raises(InvalidAvailability):
+        normalize_ranges(date(2030, 1, 15), (interval(start, end),))
