@@ -63,7 +63,9 @@ class StaffRepository:
         return self.session.scalar(select(exists().where(Barber.id == barber_id)))
 
     def lock_barber(self, barber_id: str) -> bool:
-        return self.session.scalar(select(Barber.id).where(Barber.id == barber_id).with_for_update()) is not None
+        # NO KEY UPDATE serializes schedule writers without blocking the
+        # foreign-key KEY SHARE check made after booking claims its blocks.
+        return self.session.scalar(select(Barber.id).where(Barber.id == barber_id).with_for_update(key_share=True)) is not None
 
     def blocks(self, barber_id: str, day: date) -> tuple[StaffBlock, ...]:
         intervals = date_blocks(day)
