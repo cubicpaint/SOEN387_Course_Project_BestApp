@@ -137,7 +137,7 @@ function displayRange(startTime, endTime) {
 }
 
 function summary(slot, service, barberName) {
-  return `${services[service]} (${service === "both" ? 60 : 30} minutes) with ${barberName}: ${displayTime(slot.startTime)} to ${displayTime(slot.endTime)}.`;
+  return `${services[service]} (${service === "both" ? 60 : 30} minutes) with ${barberName}: ${displayRange(slot.startTime, slot.endTime)}.`;
 }
 
 function updateControls() {
@@ -357,7 +357,7 @@ async function loadAvailability(event) {
       radio.name = "starting-slot";
       radio.value = slot.slotId;
       const text = document.createElement("span");
-      text.textContent = `${displayTime(slot.startTime)} to ${displayTime(slot.endTime)}`;
+      text.textContent = displayRange(slot.startTime, slot.endTime);
       radio.addEventListener("change", () => {
         if (pendingForUser()) return;
         selected = { slotId: slot.slotId, service, summary: summary(slot, service, barberName) };
