@@ -38,6 +38,21 @@ function chooseChange(app) {
   app.run(`management = {...appointment, ifMatch:'"3"'}; changeSelected = {slotId:'slot_two', summary:'New time with Alex'};
     ui['change-confirm'].checked = true; updateControls();`);
 }
+const revision = 'a'.repeat(64);
+function staffSchedule(currentRevision = revision, barberId = 'bar_one', ranges = null) {
+  return {barberId,date:'2030-01-15',timeZone:'America/Toronto',revision:currentRevision,
+    ranges:ranges === null ? [{startTime:'2030-01-15T15:00:00Z',endTime:'2030-01-15T16:00:00Z'}] : ranges,
+    blocks:[{slotId:'slot_one',startTime:'2030-01-15T15:00:00Z',endTime:'2030-01-15T15:30:00Z',enabled:true,occupied:true}]};
+}
+function staffIdentity(app, barbers = ['bar_one']) {
+  identify(app, 'usr_staff', 'staff'); app.context.assigned = barbers;
+  app.run("user.managedBarberIds = assigned; configureStaffBarbers(); ui['staff-date'].value = '2030-01-15';");
+}
+async function loadSchedule(app) {
+  staffIdentity(app);
+  app.queue.push(versioned(200,staffSchedule(),`"${revision}"`));
+  await app.run('loadStaffAvailability()');
+}
 async function main() {
   const app = createContext();
   await new Promise(setImmediate);
@@ -155,6 +170,71 @@ async function main() {
     assert.equal(app.run('pendingChanges.size'), 0);
     assert.equal(app.run('management'), null);
     assert.match(app.nodes.get('change-status').textContent,/stale_version/);
+  } else if (scenario === 'staff_editor') {
+    await loadSchedule(app);
+    assert.equal(app.nodes.get('staff-barber').children.length,1);
+    assert.equal(app.nodes.get('staff-editor').disabled,false);
+    assert.equal(app.run('staffRangeRows[0].start.value'),'2030-01-15T10:00:00-05:00');
+    assert.equal(app.run('staffRangeRows[0].end.value'),'2030-01-15T11:00:00-05:00');
+    app.queue.push(response(503,{error:{message:'Unavailable'}})); await app.run('saveStaffAvailability()');
+    const mutation = app.calls.find(call => call.options.method === 'PUT');
+    assert.equal(mutation.options.headers['If-Match'],`"${revision}"`);
+    assert.deepEqual(JSON.parse(mutation.options.body),{ranges:[{startTime:'2030-01-15T10:00:00-05:00',endTime:'2030-01-15T11:00:00-05:00'}]});
+    assert.equal(app.nodes.get('staff-date').disabled,true);
+  } else if (scenario === 'staff_close_retry') {
+    await loadSchedule(app); app.nodes.get('staff-close-date').checked = true;
+    app.queue.push(Promise.reject(new Error('lost reply'))); await app.run('saveStaffAvailability()');
+    const saved = JSON.parse(storage.get('bestapp.pendingChanges'))[0];
+    assert.deepEqual(saved.body,{ranges:[]});
+    const restored = createContext(); await new Promise(setImmediate); staffIdentity(restored);
+    const current = staffSchedule('b'.repeat(64),'bar_one',[]);
+    restored.queue.push(versioned(200,current,`"${current.revision}"`),versioned(200,current,`"${current.revision}"`),response(200,{appointments:[]}));
+    await restored.run('submitChange()');
+    const mutation = restored.calls.find(call => call.options.method === 'PUT');
+    assert.equal(mutation.options.headers['Idempotency-Key'],saved.key);
+    assert.equal(mutation.options.headers['If-Match'],saved.ifMatch);
+    assert.deepEqual(JSON.parse(mutation.options.body),{ranges:[]});
+    assert.equal(restored.run('pendingChanges.size'),0);
+    assert.equal(restored.run('staffRevision.value'),`"${current.revision}"`);
+  } else if (scenario === 'staff_occupied_rejection') {
+    await loadSchedule(app); app.nodes.get('staff-close-date').checked = true;
+    app.queue.push(response(409,{error:{code:'availability_occupied',message:'Existing appointment occupies this range'}}),
+      versioned(200,staffSchedule(),`"${revision}"`),response(200,{appointments:[]}));
+    await app.run('saveStaffAvailability()');
+    assert.equal(app.run('pendingChanges.size'),0);
+    assert.equal(app.run('staffRevision.value'),`"${revision}"`);
+    assert.match(app.nodes.get('change-status').textContent,/availability_occupied/);
+    assert.equal(app.nodes.get('staff-close-date').checked,false);
+  } else if (scenario === 'staff_selection_race') {
+    staffIdentity(app,['bar_one','bar_two']);
+    const old = deferred(); app.queue.push(old.promise); const first = app.run('loadStaffAvailability()');
+    app.nodes.get('staff-barber').value = 'bar_two'; app.nodes.get('staff-barber').listeners.change();
+    app.queue.push(versioned(200,staffSchedule('b'.repeat(64),'bar_two'),`"${'b'.repeat(64)}"`));
+    await app.run('loadStaffAvailability()');
+    old.resolve(versioned(200,staffSchedule(),`"${revision}"`)); await first;
+    assert.equal(app.run('staffRevision.barberId'),'bar_two');
+    assert.equal(app.run('staffRevision.value'),`"${'b'.repeat(64)}"`);
+  } else if (scenario === 'staff_list_account_race') {
+    staffIdentity(app); const old = deferred(); app.queue.push(old.promise); const first = app.run('loadStaffAppointments()');
+    app.run('signOut()'); identify(app,'usr_two');
+    old.resolve(response(200,{appointments:[{...appointment,customerEmail:'private@example.com'}]})); await first;
+    assert.equal(app.nodes.get('staff-appointments').children.length,0);
+  } else if (scenario === 'staff_unassigned') {
+    staffIdentity(app,[]); app.nodes.get('staff-barber').value = 'bar_one';
+    const count = app.calls.length;
+    await app.run('loadStaffAvailability()'); await app.run('loadStaffAppointments()');
+    assert.equal(app.calls.length,count);
+    assert.match(app.nodes.get('staff-availability-status').textContent,/No barbers/);
+  } else if (scenario === 'staff_missing_offset') {
+    await loadSchedule(app); app.run("staffRangeRows[0].start.value = '2030-01-15T10:00:00'");
+    const count = app.calls.length; await app.run('saveStaffAvailability()');
+    assert.equal(app.calls.length,count);
+    assert.equal(app.run('pendingChanges.size'),0);
+    assert.match(app.nodes.get('staff-availability-status').textContent,/explicit offset/);
+  } else if (scenario === 'staff_dst_offsets') {
+    assert.equal(app.run("torontoTimestamp('2026-11-01T05:00:00Z')"),'2026-11-01T01:00:00-04:00');
+    assert.equal(app.run("torontoTimestamp('2026-11-01T06:00:00Z')"),'2026-11-01T01:00:00-05:00');
+    assert.equal(app.run("torontoTimestamp('2026-03-08T07:00:00Z')"),'2026-03-08T03:00:00-04:00');
   } else throw new Error('Unknown scenario');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
@@ -164,6 +244,8 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
 @pytest.mark.parametrize("scenario", [
     "change_restore", "change_blocks_booking", "reject_unsafe_restore", "time_only_choices", "reschedule_retry",
     "cancel_restore", "expired_change", "management_account_race", "mutation_account_race", "replacement_race", "stale_change",
+    "staff_editor", "staff_close_retry", "staff_occupied_rejection", "staff_selection_race", "staff_list_account_race",
+    "staff_unassigned", "staff_missing_offset", "staff_dst_offsets",
 ])
 def test_management_state_machine(scenario):
     node = shutil.which("node")
