@@ -14,6 +14,13 @@ from app.domain.types import ServiceChoice
 BOOK_OPERATION = "POST /appointments"
 
 
+def request_fingerprint(operation: str, target: str, content: dict, precondition: str) -> str:
+    """Bind management intents without changing historical booking encodings."""
+    normalized = {"operation": operation, "target": target, "request": content, "precondition": precondition}
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
 def booking_fingerprint(slot_id: str, service: ServiceChoice, *, operation: str = BOOK_OPERATION) -> str:
     # Hash validated content rather than its original JSON representation.
     # The caller is a separate database scope; values stay case-sensitive.

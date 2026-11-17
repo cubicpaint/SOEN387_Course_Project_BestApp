@@ -2,7 +2,7 @@
 
 import json
 
-from app.data.idempotency import BOOK_OPERATION, booking_fingerprint
+from app.data.idempotency import BOOK_OPERATION, booking_fingerprint, request_fingerprint
 from app.domain.types import ServiceChoice
 
 
@@ -26,3 +26,14 @@ def test_fingerprint_binds_slot_service_and_operation_without_normalizing_values
     assert len(original) == 64
     assert all(character in "0123456789abcdef" for character in original)
     assert BOOK_OPERATION == "POST /appointments"
+
+
+def test_management_fingerprint_binds_target_version_method_and_normalized_content():
+    original = request_fingerprint("PUT", "apt_one", {"slotId": "slot_one", "date": "2030-01-15"}, '"1"')
+    assert original == request_fingerprint("PUT", "apt_one", {"date": "2030-01-15", "slotId": "slot_one"}, '"1"')
+    assert all(original != value for value in (
+        request_fingerprint("DELETE", "apt_one", {"slotId": "slot_one", "date": "2030-01-15"}, '"1"'),
+        request_fingerprint("PUT", "apt_two", {"slotId": "slot_one", "date": "2030-01-15"}, '"1"'),
+        request_fingerprint("PUT", "apt_one", {"slotId": "slot_two", "date": "2030-01-15"}, '"1"'),
+        request_fingerprint("PUT", "apt_one", {"slotId": "slot_one", "date": "2030-01-15"}, '"2"'),
+    ))
