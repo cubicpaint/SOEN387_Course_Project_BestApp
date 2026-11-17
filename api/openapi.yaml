@@ -1642,6 +1642,8 @@ components:
       - '"1"'
     Revision:
       type: string
+      minLength: 64
+      maxLength: 64
       pattern: ^[0-9a-f]{64}$
       examples:
       - aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -1845,7 +1847,7 @@ components:
           description: Persisted creation timestamp; does not define the eligibility decision clock
         customerEmail:
           type: string
-          format: email
+          minLength: 1
           maxLength: 254
       allOf:
       - if:
