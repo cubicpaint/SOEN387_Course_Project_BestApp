@@ -102,6 +102,66 @@ class AppointmentService:
                 raise ServiceUnavailable() from None
             raise
 
+    def cancel(self, caller: Caller | None, appointment_id: str, *, expected_version: int, key: str) -> BookingOutcome:
+        return self._change(caller, appointment_id, expected_version=expected_version, key=key)
+
+    def _change(
+        self, caller: Caller | None, appointment_id: str, *, expected_version: int, key: str
+    ) -> BookingOutcome:
+        customer = require_customer(caller)
+        operation = "DELETE /appointments/{appointmentId}"
+        fingerprint = request_fingerprint(operation, appointment_id, {}, f'"{expected_version}"')
+        try:
+            with self.session_factory() as session, session.begin():
+                repository = AppointmentRepository(session)
+                if not repository.lock_customer(customer.id):
+                    raise Unauthenticated()
+                idempotency = IdempotencyRepository(session)
+                stored = idempotency.find(customer.id, key)
+                if stored is not None:
+                    if stored.operation != operation or stored.fingerprint != fingerprint:
+                        return deepcopy(KEY_CONFLICT)
+                    return BookingOutcome(stored.response_status, deepcopy(stored.response_body))
+                try:
+                    with session.begin_nested():
+                        outcome = self._decide_change(repository, customer, appointment_id, expected_version)
+                except _BusinessRejection as error:
+                    outcome = deepcopy(error.outcome)
+                except IntegrityError as error:
+                    diagnostic = getattr(error.orig, "diag", None)
+                    if getattr(diagnostic, "constraint_name", None) != "pk_slot_allocations":
+                        raise
+                    outcome = deepcopy(SLOT_UNAVAILABLE)
+                idempotency.store(caller_id=customer.id, key=key, operation=operation,
+                                  fingerprint=fingerprint, outcome=outcome)
+            return outcome
+        except (OperationalError, TimeoutError):
+            raise ServiceUnavailable() from None
+        except DBAPIError as error:
+            if error.connection_invalidated:
+                raise ServiceUnavailable() from None
+            raise
+
+    def _decide_change(self, repository: AppointmentRepository, customer: Caller, appointment_id: str, expected_version: int):
+        appointment = self._owned(repository, customer, appointment_id, lock=True)
+        if appointment.version != expected_version:
+            raise _BusinessRejection(STALE_VERSION)
+        if appointment.status != "confirmed":
+            raise _BusinessRejection(NOT_CONFIRMED)
+        original = repository.allocated_blocks(appointment_id)
+        if len(original) != service_duration_minutes(ServiceChoice(appointment.service)) // 30:
+            raise RuntimeError("The confirmed appointment does not have its complete allocation.")
+        for block in original:
+            if not repository.protect_change_block(block, appointment_id, owned=True, required=False):
+                raise _BusinessRejection(SLOT_UNAVAILABLE)
+        decision_time = self.clock()
+        if not change_notice_satisfied(appointment.starts_at, decision_time):
+            raise _BusinessRejection(CHANGE_CUTOFF)
+        repository.change_allocations(appointment_id, {block.id for block in original}, set())
+        if not repository.update_appointment(appointment, expected_version, None):
+            raise _BusinessRejection(STALE_VERSION)
+        return BookingOutcome(200, repository.management_snapshot(appointment))
+
     def book(self, caller: Caller | None, *, slot_id: str, service: ServiceChoice, key: str) -> BookingOutcome:
         customer = require_customer(caller)
         fingerprint = booking_fingerprint(slot_id, service)
