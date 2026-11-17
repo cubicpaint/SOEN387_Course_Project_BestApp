@@ -1,10 +1,12 @@
 """Verify Phase 5 against the running API with isolated temporary shop data.
 
 Run from the repository root with host development dependencies and matching
-DATABASE_URL/JWT settings. This command never restarts containers, changes the
-server clock, or modifies provisioned demonstration data.
+DATABASE_URL/JWT settings. The default leaves containers running; --restart also
+checks retained-volume restart/recreation. Neither mode changes the server clock
+or provisioned demonstration data. Run restart checks separately from test suites.
 """
 
+import argparse
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from http.client import HTTPConnection
@@ -16,8 +18,10 @@ from urllib.parse import urlencode
 from jsonschema import Draft202012Validator, FormatChecker
 from sqlalchemy import delete, insert, select
 
-from app.data.models import Appointment, AvailabilityBlock, SlotAllocation, StaffBarber
+from app.data.models import Appointment, AvailabilityBlock, IdempotencyRecord, SlotAllocation, StaffBarber
 from scripts.phase4_probe import LiveReply, Phase4Probe, TORONTO, VerificationError, require, resolve
+from scripts.verify_phase2_runtime import wait_ready
+from scripts.verify_phase4_runtime import compose
 
 
 @dataclass(frozen=True)
@@ -122,6 +126,16 @@ class Phase5Probe(Phase4Probe):
         with self.engine.connect() as connection:
             return set(connection.scalars(select(SlotAllocation.slot_id).where(SlotAllocation.appointment_id == appointment_id)))
 
+    def outcomes(self) -> tuple:
+        """Snapshot every fixture-owned durable binding without printing keys."""
+        with self.engine.connect() as connection:
+            return tuple(tuple(row) for row in connection.execute(select(
+                IdempotencyRecord.caller_id, IdempotencyRecord.key, IdempotencyRecord.operation,
+                IdempotencyRecord.fingerprint, IdempotencyRecord.response_status, IdempotencyRecord.response_body,
+            ).where(IdempotencyRecord.caller_id.in_(self.users)).order_by(
+                IdempotencyRecord.caller_id, IdempotencyRecord.key,
+            )))
+
     def change(self, appointment_id: str, etag: str, key: str, *, slot: int | None = None,
                account: int = 0, status: int = 200, code: str | None = None) -> ManagementReply:
         return self.check(
@@ -137,7 +151,7 @@ def same_replay(original: ManagementReply, replay: ManagementReply) -> None:
     require(original.correlation_id != replay.correlation_id, "Replay did not receive a fresh correlation identifier.")
 
 
-def verify() -> None:
+def verify(*, restart: bool = False) -> None:
     with Phase5Probe() as probe:
         probe.check_publication()
         require(sum(method in {"get", "post", "put", "delete"} for item in probe.document["paths"].values() for method in item) == 14,
@@ -222,12 +236,65 @@ def verify() -> None:
         same_replay(occupied, probe.check(staff_path + "/availability", method="put", account=2, query=query, key="occupied-date",
                                          headers=[("If-Match", configured.etag)], body={"ranges": []}, status=409, code="availability_occupied"))
         print("PASS: stale staff preconditions, complete date closure/reopen, permanent slot identity and historical availability replay", flush=True)
+
+        active_booking = probe.book(0, service="both", key="persistent-booking")
+        active_id = active_booking.body["id"]
+        active_path = f"/appointments/{active_id}"
+        active_original = probe.check(active_path, account=0)
+        active_move = probe.change(active_id, active_original.etag, "persistent-move", slot=1)
+        require(probe.allocation_ids(active_id) == {probe.slot(0, 1), probe.slot(0, 2)},
+                "The active persistence fixture did not retain and acquire the correct blocks.")
+        same_replay(active_booking, probe.book(0, service="both", key="persistent-booking"))
+        require(probe.check(path, account=0).raw == cancelled.raw and not probe.allocation_ids(appointment_id),
+                "Reusing a cancelled appointment's old blocks changed its retained history.")
+
+        if restart:
+            expected_state = probe.state()
+            expected_outcomes = probe.outcomes()
+            expected_own = probe.check("/appointments", account=0).body
+            expected_staff = probe.check(staff_path + "/appointments", account=2).body
+            expected_date = probe.check(staff_path + "/availability", account=2, query=query)
+            appointment_ids = (appointment_id, blocker.body["id"], short.body["id"], active_id)
+            expected_allocations = {identifier: probe.allocation_ids(identifier) for identifier in appointment_ids}
+            for arguments in (("restart", "db", "api"), ("up", "-d", "--force-recreate", "db", "migrate", "api")):
+                probe.engine.dispose()
+                compose(*arguments)
+                wait_ready()
+                for account in range(3):
+                    probe.login(account)
+                same_replay(cancelled, probe.check(path, account=0))
+                same_replay(active_move, probe.check(active_path, account=0))
+                require({identifier: probe.allocation_ids(identifier) for identifier in appointment_ids} == expected_allocations,
+                        "Restart/recreation changed active or cancelled appointment allocations.")
+                require(probe.check("/appointments", account=0).body == expected_own,
+                        "Restart/recreation changed the customer's current upcoming appointments.")
+                require(probe.check(staff_path + "/appointments", account=2).body == expected_staff,
+                        "Restart/recreation changed staff appointment visibility or assignments.")
+                same_replay(expected_date, probe.check(staff_path + "/availability", account=2, query=query))
+                same_replay(booked, probe.book(0, service="both", key="original-booking"))
+                same_replay(moved, probe.change(appointment_id, original.etag, "move-forward", slot=1))
+                same_replay(cancelled, probe.change(appointment_id, moved.etag, "cancel-main"))
+                same_replay(active_booking, probe.book(0, service="both", key="persistent-booking"))
+                same_replay(active_move, probe.change(active_id, active_original.etag, "persistent-move", slot=1))
+                same_replay(closed, probe.check(staff_path + "/availability", method="put", account=2, query=query, key="close-date",
+                                               headers=[("If-Match", fresh.etag)], body={"ranges": []}))
+                require(probe.outcomes() == expected_outcomes and probe.state() == expected_state,
+                        "Restart/recreation or historical replay changed persisted bindings, counts, or current appointments.")
+                require({identifier: probe.allocation_ids(identifier) for identifier in appointment_ids} == expected_allocations,
+                        "Historical replay changed retained allocations after restart/recreation.")
+                same_replay(cancelled, probe.check(path, account=0))
+                same_replay(active_move, probe.check(active_path, account=0))
+                same_replay(expected_date, probe.check(staff_path + "/availability", account=2, query=query))
+            print("PASS: active reschedules, cancelled history, allocations, staff revisions and exact immutable outcomes survive retained-volume restart/recreation", flush=True)
         print("PASS: Phase 5 live verification complete; only temporary fixtures will be removed", flush=True)
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--restart", action="store_true", help="Also restart/recreate API and database containers, retaining the named volume.")
+    arguments = parser.parse_args()
     try:
-        verify()
+        verify(restart=arguments.restart)
     except VerificationError as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(1) from None
