@@ -699,7 +699,7 @@ async function loadStaffAppointments() {
     for (const appointment of result.body.appointments) {
       const item = document.createElement("li");
       const title = document.createElement("strong"); title.textContent = `${services[appointment.service]} · ${appointment.durationMinutes} minutes`;
-      const detail = document.createElement("span"); detail.textContent = `${displayTime(appointment.startTime)} to ${displayTime(appointment.endTime)}`;
+      const detail = document.createElement("span"); detail.textContent = displayRange(appointment.startTime, appointment.endTime);
       const contact = document.createElement("span"); contact.textContent = appointment.customerEmail;
       const reference = document.createElement("small"); reference.textContent = appointment.id;
       item.append(title, detail, contact, reference); ui["staff-appointments"].append(item);
