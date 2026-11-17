@@ -11,12 +11,14 @@ from fastapi.exceptions import RequestValidationError
 from app.config import AuthSettings, Settings, load_auth_settings, load_settings
 from app.data.database import create_engine_from_settings, create_session_factory
 from app.interface.appointments import router as appointments_router
+from app.interface.appointment_management import router as appointment_management_router
 from app.interface.auth import router as auth_router
 from app.interface.browsing import router as browsing_router
 from app.interface.errors import error_response
 from app.interface.frontend import router as frontend_router
 from app.interface.health import router
 from app.interface.middleware import RequestContextMiddleware
+from app.interface.staff import router as staff_router
 from app.interface.validation import InputError
 from app.logging import configure_logging
 from app.services.health import ReadinessService
@@ -25,17 +27,20 @@ from app.services.appointments import AppointmentService
 from app.services.browsing import BrowsingService
 from app.services.errors import BarberNotFound, Forbidden, InvalidCredentials, ServiceUnavailable, Unauthenticated
 from app.services.tokens import TokenService
+from app.services.staff import StaffService
 
 
 def runtime_openapi() -> dict:
     source = Path(__file__).resolve().parents[1] / "api" / "openapi.yaml"
     document = deepcopy(yaml.safe_load(source.read_text(encoding="utf-8")))
-    implemented = ("/health/live", "/health/ready", "/auth/login", "/barbers", "/availability", "/appointments")
+    implemented = ("/health/live", "/health/ready", "/auth/login", "/barbers", "/availability", "/appointments",
+                   "/appointments/{appointmentId}", "/appointments/{appointmentId}/availability",
+                   "/barbers/{barberId}/appointments", "/barbers/{barberId}/availability")
     document["paths"] = {path: document["paths"][path] for path in implemented}
-    document["info"]["description"] = "Implemented milestone operations: health, login, browsing, atomic booking, and own upcoming appointments."
-    document["x-status"] = "phase-4-implemented"
+    document["info"]["description"] = "Implemented booking and management operations; Phase 5 verification is in progress."
+    document["x-status"] = "phase-5-verification-in-progress"
     document["servers"] = [{"url": "/", "description": "Current service"}]
-    document["tags"] = [{"name": tag} for tag in ("Health", "Authentication", "Barbers", "Availability", "Appointments")]
+    document["tags"] = [{"name": tag} for tag in ("Health", "Authentication", "Barbers", "Availability", "Appointments", "Staff")]
     return document
 
 
@@ -58,11 +63,14 @@ def create_app(settings: Settings | None = None, auth_settings: AuthSettings | N
     application.state.authentication = AuthenticationService(create_session_factory(engine), TokenService(auth_settings))
     application.state.browsing = BrowsingService(create_session_factory(engine))
     application.state.appointments = AppointmentService(create_session_factory(engine))
+    application.state.staff = StaffService(create_session_factory(engine))
     application.add_middleware(RequestContextMiddleware)
     application.include_router(router)
     application.include_router(auth_router)
     application.include_router(browsing_router)
     application.include_router(appointments_router)
+    application.include_router(appointment_management_router)
+    application.include_router(staff_router)
     application.include_router(frontend_router)
 
     @application.exception_handler(InputError)
