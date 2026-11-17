@@ -1,6 +1,6 @@
 # API behavior reference
 
-This document explains the implemented milestone behavior specified by [openapi.yaml](openapi.yaml): login, barber listing, availability browsing, atomic booking, own upcoming appointments, and health checks. This reference alone is not runtime verification evidence. The README records workflows and verification, and the OpenAPI document defines request and response schemas.
+This document explains the implemented milestone behavior and approved Phase 5 management contract specified by [openapi.yaml](openapi.yaml). The README records actual implementation and verification status; this reference alone is not runtime verification evidence. The OpenAPI document defines request and response schemas.
 
 ## Operations and callers
 
@@ -11,12 +11,19 @@ This document explains the implemented milestone behavior specified by [openapi.
 | `GET /availability` | Public | `200` with eligible starts for the requested barber, local date, and service; an empty array is valid |
 | `POST /appointments` | Authenticated customer | `201` with the created appointment, or the recorded creation result on replay |
 | `GET /appointments` | Authenticated customer | `200` with only that customer's upcoming confirmed appointments, ordered by start time, then ID |
+| `GET /appointments/{appointmentId}` | Authenticated owner | `200` with current schedule, confirmed/cancelled status, version, and strong ETag |
+| `PUT /appointments/{appointmentId}` | Authenticated owner | `200` after a time-only reschedule; service and barber stay fixed |
+| `DELETE /appointments/{appointmentId}` | Authenticated owner | `200` with cancelled history after releasing all active allocations |
+| `GET /appointments/{appointmentId}/availability` | Authenticated owner | `200` with eligible replacements using the original barber/service and reusable own blocks |
+| `GET /barbers/{barberId}/appointments` | Staff assigned to that barber | `200` with upcoming confirmed appointments and customer email |
+| `GET /barbers/{barberId}/availability` | Staff assigned to that barber | `200` with the configured Toronto date, blocks, occupancy, and revision ETag |
+| `PUT /barbers/{barberId}/availability` | Staff assigned to that barber | `200` after replacing that date's complete desired ranges |
 | `GET /health/live` | Public | `200` when the HTTP process responds; no database or provider call |
 | `GET /health/ready` | Public | `200` when required application and database/schema dependencies are available |
 
 Public operations ignore `Authorization`; they do not establish a caller from it. Protected operations require exactly one valid `Authorization: Bearer <token>` header. Missing, duplicate, forged, expired, or otherwise invalid bearer authorization returns `401 unauthenticated`. A valid staff identity receives `403 forbidden` on customer-only operations.
 
-Login matches the stored email exactly, including case, and does not trim or normalize either credential. Tokens use the configured issuer, audience, and lifetime (default 1800 seconds, maximum 3600). Trusted identities and staff assignments are reloaded from the database after token verification. Both deployed appointment operations enforce bearer authentication and customer permission, with independent authorization in the application service.
+Login matches the stored email exactly, including case, and does not trim or normalize either credential. Tokens use the configured issuer, audience, and lifetime (default 1800 seconds, maximum 3600). Trusted identities and staff assignments are reloaded from the database after token verification. Customer appointment operations enforce bearer authentication and customer permission, with independent authorization in the application service. Owner-only management operations also enforce ownership; staff operations check the requested barber against the current assignment mapping.
 
 Booking requires exactly one `Idempotency-Key` header; a missing, duplicate, or malformed key returns `422 validation_error`. Unknown or repeated query parameters are rejected. Duplicate JSON object member names are malformed input, including duplicates inside nested objects.
 
@@ -43,7 +50,7 @@ Availability queries interpret `date` in `America/Toronto`. The date extends fro
 
 Within a retained database, a slot ID permanently identifies the same barber and base-block interval. It must never be rebound or reused for a different block, even after the original availability is retired.
 
-The agreed customer change cutoff is at least 24 elapsed hours before an existing appointment starts. Before accepting a booking made at least two but less than 24 hours ahead, clients must explain that the customer cannot later cancel or reschedule it online. This contract exposes no change operation.
+The agreed customer change cutoff is at least 24 elapsed hours before an existing appointment starts. Before accepting a booking made at least two but less than 24 hours ahead, clients must explain that the customer cannot later cancel or reschedule it online. Rescheduling changes time only. The customer explicitly approved retaining the original service and barber; a destination belonging to another barber is rejected.
 
 ## Errors and retry decisions
 
@@ -109,3 +116,41 @@ The following checks are expected runtime evidence; schema and example validatio
 - Recover the original booking after a lost reply or uncertain server error by retrying the same key and body; use fresh correlation headers.
 - Verify distinct Toronto fallback instants, 23-/25-hour date queries, and permanent slot identity.
 - Keep liveness independent of database failure while readiness returns a controlled `503` when the required database/schema is unavailable.
+
+## Customer appointment management
+
+The existing booking and own-upcoming-list representations remain unchanged: they report confirmed appointments and do not gain a required version. A separate owner-only management read exposes the current version and either confirmed or cancelled status, even when the upcoming list no longer includes the appointment. Cancellation preserves the appointment row, historical schedule, and permanent slot identities.
+
+For a new reschedule or cancellation intent, read the management representation and send its strong quoted ETag in exactly one `If-Match` header, together with exactly one valid `Idempotency-Key`. Weak tags, wildcard tags, and missing, repeated, or malformed preconditions are `422 validation_error`. A valid but stale version produces `412 stale_version`. A fresh request cannot change a cancelled appointment.
+
+Rescheduling accepts only `slotId`. Service, barber, customer, duration, and optional notes fields are rejected. The destination must belong to the existing barber; another barber returns `409 barber_change_forbidden`. The same appointment ID and original creation time survive a successful move.
+
+Cancellation and rescheduling require the current existing start to be at least 24 elapsed hours after one trusted server decision time. The replacement must start at least two elapsed hours after that same time. Exactly 24 and two hours are eligible. UTC elapsed duration governs both rules across daylight-saving changes. The clock is sampled after customer, appointment, and block waits; browser time never authorizes a change.
+
+The replacement requires complete enabled duration and no customer conflict, excluding only the appointment being moved. The protected replacement-availability operation derives barber and service from the owned appointment and accepts only the local date query. It treats that appointment's own blocks as reusable; public availability continues to hide all occupied blocks. Both browsing and mutation remain subject to eligibility, and browsing does not hold a slot.
+
+For a 60-minute appointment occupying 10:00 and 10:30 blocks, a move to 10:30 retains the shared 10:30 block, acquires 11:00, and releases 10:00. Protect the union of source and destination blocks in a common barber/start/ID order. If any claim, rule, or persistence step fails, restore the original appointment, all allocations, and all affected versions.
+
+Cancellation releases every allocation and advances the appointment version once in the same transaction. Replaying the completed cancellation does not release blocks or advance versions again. Before confirming a replacement made less than 24 hours ahead, show the same online-change restriction as short-notice booking.
+
+## Assigned-barber staff management
+
+Staff can read upcoming confirmed appointments only for assigned barbers, ordered by start and appointment ID, with customer email for shop contact. The all-barber shop account uses the existing staff role and assignment rows. The staff view does not confer customer appointment-editing privileges.
+
+The protected staff availability GET and PUT require one `date` query interpreted in `America/Toronto`. GET includes all configured blocks, enabled/disabled state, occupancy, normalized enabled ranges, and a revision. It does not apply the customer booking-notice filter.
+
+PUT replaces one complete date's desired ranges. `{"ranges": []}` closes that date. Each range supplies positive, nonoverlapping boundaries on the half-hour grid with explicit numeric offsets matching Toronto at those instants. The last endpoint may be the following local midnight. This distinguishes the repeated autumn hour and rejects nonexistent spring times and unsupported calendar conversions. Responses use Toronto-offset ranges so they can be submitted again; individual blocks use UTC timestamps ending in Z.
+
+Materialize each elapsed half-hour between separately converted Toronto midnights: 46, 48, or 50 blocks. Preserve existing identities, create missing blocks, enable desired intervals, and disable omitted ones. Never move or rebind a slot ID. Reject the entire edit with `409 availability_occupied` if it would disable any occupied block, including one half of an appointment crossing midnight. No automatic appointment move or cancellation is implied.
+
+A staff date read returns a strong quoted revision ETag; a new PUT requires it as `If-Match` and requires an idempotency key. A stale revision returns `412 stale_version`. A conflicting block write returns `409 availability_conflict`. Serialize same-barber schedule writers and missing-block creation with a short barber lock; changed blocks also participate in version checks used by booking. Demo provisioning takes the same barber lock and preserves disabled blocks, so rerunning it cannot reopen a staff-closed gap.
+
+## Management retries and current state
+
+Management fingerprints bind caller scope, HTTP operation, resource path, normalized request content, and precondition. Authentication and current permissions precede replay. In particular, a staff account whose assignment was revoked cannot replay protected schedule data.
+
+Matching completed requests return their original HTTP status and deterministic JSON body before rechecking current state, version, cutoff, or availability. The ETag on such a response identifies that stored snapshot, not necessarily the resource's latest state. Generate a fresh correlation ID for each reply.
+
+Persist successful changes and completed business rejections atomically with the decision. Input, authentication, and authorization errors do not bind a key. Conflicting key reuse preserves the first binding. Transient `500`/`503` outcomes do not intentionally complete an unfinished key; retry the unchanged method, path, body, precondition, and key after an uncertain reply.
+
+An original booking replay after a later reschedule or cancellation still returns the original creation response without changing the current appointment. A prior reschedule replay likewise never reverses a later change. Clients should refresh the current management/list view after resolving a pending intent rather than rendering an old snapshot as current state.
